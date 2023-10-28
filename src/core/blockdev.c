@@ -129,13 +129,16 @@ int block_read_capacity ( struct interface *control, struct interface *data ) {
 void block_capacity ( struct interface *intf,
 		      struct block_device_capacity *capacity ) {
 	struct interface *dest;
+    DBGC ( intf, " block_capacity()\n" );
 	block_capacity_TYPE ( void * ) *op =
 		intf_get_dest_op ( intf, block_capacity, &dest );
 	void *object = intf_object ( dest );
 
 	if ( op ) {
+        DBGC ( intf, " block_capacity() op\n" );
 		op ( object, capacity );
 	} else {
+        DBGC ( intf, " block_capacity() no op\n" );
 		/* Default is to do nothing */
 	}
 

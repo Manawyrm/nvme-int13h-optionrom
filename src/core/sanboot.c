@@ -134,7 +134,7 @@ static void sandev_free ( struct refcnt *refcnt ) {
  * @v rc		Reason for close
  */
 static void sandev_command_close ( struct san_device *sandev, int rc ) {
-
+    DBGC ( sandev, " sandev_command_close() rc: %d\n", rc );
 	/* Stop timer */
 	stop_timer ( &sandev->timer );
 
@@ -153,7 +153,7 @@ static void sandev_command_close ( struct san_device *sandev, int rc ) {
  */
 static void sandev_command_capacity ( struct san_device *sandev,
 				      struct block_device_capacity *capacity ) {
-
+    DBGC ( sandev, " sandev_command_capacity() \n" );
 	/* Record raw capacity information */
 	memcpy ( &sandev->capacity, capacity, sizeof ( sandev->capacity ) );
 }
@@ -537,9 +537,9 @@ sandev_command ( struct san_device *sandev,
 		start_timer_fixed ( &sandev->timer, SAN_COMMAND_TIMEOUT );
 
 		/* Wait for command to complete */
-		while ( timer_running ( &sandev->timer ) )
-			step();
-
+		while ( timer_running ( &sandev->timer ) ) {
+            step();
+        }
 		/* Check command status */
 		if ( ( rc = sandev->command_rc ) != 0 ) {
 			retries++;
@@ -835,6 +835,7 @@ struct san_device * alloc_sandev ( struct uri **uris, unsigned int count,
 	if ( ! sandev )
 		return NULL;
 	ref_init ( &sandev->refcnt, sandev_free );
+    DBGC ( sandev, " alloc_sandev(sandev->command: %p) \n", &sandev->command );
 	intf_init ( &sandev->command, &sandev_command_desc, &sandev->refcnt );
 	timer_init ( &sandev->timer, sandev_command_expired, &sandev->refcnt );
 	sandev->priv = ( ( ( void * ) sandev ) + size );
@@ -887,18 +888,26 @@ int register_sandev ( struct san_device *sandev, unsigned int drive,
 	if ( ( rc = sandev_reopen ( sandev ) ) != 0 )
 		goto err_reopen;
 
+    DBGC ( sandev, "Describe device\n" );
+
 	/* Describe device */
 	if ( ( rc = sandev_describe ( sandev ) ) != 0 )
 		goto err_describe;
+
+    DBGC ( sandev, "Read device capacity\n" );
 
 	/* Read device capacity */
 	if ( ( rc = sandev_command ( sandev, sandev_command_read_capacity,
 				     NULL ) ) != 0 )
 		goto err_capacity;
 
+    DBGC ( sandev, "Configure as a CD-ROM, if applicable\n" );
+
 	/* Configure as a CD-ROM, if applicable */
 	if ( ( rc = sandev_parse_iso9660 ( sandev ) ) != 0 )
 		goto err_iso9660;
+
+    DBGC ( sandev, "Add to list of SAN devices\n" );
 
 	/* Add to list of SAN devices */
 	list_add_tail ( &sandev->list, &san_devices );
@@ -908,9 +917,13 @@ int register_sandev ( struct san_device *sandev, unsigned int drive,
 
 	list_del ( &sandev->list );
  err_iso9660:
+    DBGC ( sandev, " err_iso9660\n" );
  err_capacity:
+    DBGC ( sandev, " err_capacity\n" );
  err_describe:
+    DBGC ( sandev, " err_describe\n" );
  err_reopen:
+    DBGC ( sandev, " err_reopen\n" );
 	sandev_restart ( sandev, rc );
 	sandev_undescribe ( sandev );
  err_in_use:

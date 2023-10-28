@@ -124,6 +124,9 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 /** Uncorrectable error status */
 #define PCI_ERR_UNCOR_STATUS	0x04
 
+#define PCI_CLASS_MASSSTORAGE	0x01
+#define PCI_CLASS_MASSSTORAGE_NVM	0x08
+
 /** Network controller */
 #define PCI_CLASS_NETWORK	0x02
 

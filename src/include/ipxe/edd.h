@@ -71,6 +71,8 @@ struct edd_interface_type {
 #define EDD_INTF_TYPE_SATA EDD_INTF_TYPE ( 'S', 'A', 'T', 'A' )
 /** EDD SAS interface type */
 #define EDD_INTF_TYPE_SAS EDD_INTF_TYPE ( 'S', 'A', 'S' )
+/** EDD NVMe interface type */
+#define EDD_INTF_TYPE_NVME EDD_INTF_TYPE ( 'N', 'V', 'M', 'E' )
 
 /** An EDD interface path */
 union edd_interface_path {
