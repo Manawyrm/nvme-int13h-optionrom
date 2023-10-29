@@ -134,7 +134,7 @@ static void sandev_free ( struct refcnt *refcnt ) {
  * @v rc		Reason for close
  */
 static void sandev_command_close ( struct san_device *sandev, int rc ) {
-    DBGC ( sandev, " sandev_command_close() rc: %d\n", rc );
+    //DBGC ( sandev, " sandev_command_close() rc: %d\n", rc );
 	/* Stop timer */
 	stop_timer ( &sandev->timer );
 

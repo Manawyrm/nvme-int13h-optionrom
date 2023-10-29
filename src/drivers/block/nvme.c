@@ -17,9 +17,10 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 #include "nvme.h"
 #include "nvme-int.h"
 
-#define u8 unsigned char
-#define u16 unsigned short
-#define u32 unsigned int
+#define u8 uint8_t
+#define u16 uint16_t
+#define u32 uint32_t
+#define u64 uint64_t
 
 /** @file
  *
@@ -141,13 +142,14 @@ static struct nvme_sqe * nvme_get_next_sqe(struct nvme_sq *sq, u8 opc, void *met
     sqe->dptr_prp1 = (u32)data;
     sqe->dptr_prp2 = (u32)data2;
 
-    DBGC ( sq, "sqe->dptr_prp1 %p\n", sqe->dptr_prp1);
+    //DBGC ( sq, "sqe->dptr_prp1 %p\n", sqe->dptr_prp1);
 
     return sqe;
 }
+
 static int nvme_poll_cq(struct nvme_cq *cq)
 {
-    DBGC ( cq, "nvme_poll_cq %p\n", &cq->cqe[cq->head].dword[3]);
+    //DBGC ( cq, "nvme_poll_cq %p\n", &cq->cqe[cq->head].dword[3]);
     u32 dw3 = (cq->cqe[cq->head].dword[3]);
     //u32 dw3 = readl(&cq->cqe[cq->head].dword[3]);
 
@@ -168,6 +170,7 @@ static struct nvme_cqe nvme_error_cqe(void)
     memset(&r, 0xFF, sizeof(r));
     return r;
 }
+
 static struct nvme_cqe nvme_consume_cqe(struct nvme_sq *sq)
 {
     struct nvme_cq *cq = sq->cq;
@@ -198,11 +201,10 @@ static struct nvme_cqe nvme_consume_cqe(struct nvme_sq *sq)
     return *cqe;
 }
 
-
 /* Call this after you've filled out an sqe that you've got from nvme_get_next_sqe. */
 static void nvme_commit_sqe(struct nvme_sq *sq)
 {
-    DBGC ( sq, "sq %p commit_sqe %d doorbell address: %p\n", sq, sq->tail, sq->common.dbl);
+    //DBGC ( sq, "sq %p commit_sqe %d doorbell address: %p\n", sq, sq->tail, sq->common.dbl);
     sq->tail = (sq->tail + 1) & sq->common.mask;
 
     sq->common.dbl[0] = sq->tail;
@@ -301,9 +303,11 @@ static int nvme_create_io_cq(struct nvme_ctrl *ctrl, struct nvme_cq *cq, u16 q_i
         goto err;
     }
 
+    // FIXME: virt_to_phys oder DMA Buffer?!
+
     cmd_create_cq = nvme_get_next_sqe(&ctrl->admin_sq,
                                       NVME_SQE_OPC_ADMIN_CREATE_IO_CQ, NULL,
-                                      cq->cqe, NULL);
+                                      virt_to_phys(cq->cqe), NULL);
     if (!cmd_create_cq) {
         goto err_destroy_cq;
     }
@@ -344,9 +348,11 @@ static int nvme_create_io_sq(struct nvme_ctrl *ctrl, struct nvme_sq *sq, u16 q_i
         goto err;
     }
 
+    // FIXME: virt_to_phys oder DMA Buffer?!
+
     cmd_create_sq = nvme_get_next_sqe(&ctrl->admin_sq,
                                       NVME_SQE_OPC_ADMIN_CREATE_IO_SQ, NULL,
-                                      sq->sqe, NULL);
+                                      virt_to_phys(sq->sqe), NULL);
     if (!cmd_create_sq) {
         goto err_destroy_sq;
     }
@@ -373,7 +379,6 @@ static int nvme_create_io_sq(struct nvme_ctrl *ctrl, struct nvme_sq *sq, u16 q_i
     err:
     return -1;
 }
-
 
 static int nvme_create_io_queues(struct nvme_ctrl *ctrl)
 {
@@ -414,6 +419,14 @@ static void nvme_probe_ns(struct nvme_ctrl *ctrl, u32 ns_idx, u8 mdts)
     if (!id->nsze) {
         DBGC ( ctrl, "NVMe NS %d is inactive.\n", ns_id);
         goto free_buffer;
+    }
+
+    if (!nvme_dma_buffer) {
+        nvme_dma_buffer = dma_alloc ( &ctrl->pci->dma, &sqe_map, NVME_PAGE_SIZE, NVME_PAGE_SIZE );
+        if (!nvme_dma_buffer) {
+            DBGC ( ctrl, "Failed to allocate NVMe DMA buffer\n");
+            goto free_buffer;
+        }
     }
 
     struct nvme_namespace *ns = malloc(sizeof(*ns));
@@ -545,21 +558,195 @@ static int nvme_controller_enable(struct nvme_ctrl *ctrl)
     return -1;
 }
 
+/* Reads count sectors into buf. The buffer cannot cross page boundaries. */
+static int nvme_io_xfer(struct nvme_namespace *ns, u64 lba, void *prp1, void *prp2,
+             u16 count, int write)
+{
+    if (((u32)prp1 & 0x3) || ((u32)prp2 & 0x3)) {
+        /* Buffer is misaligned */
+        DBGC ( ns, "Internal buffer is misaligned.\n");
+        return -EBUSY;
+    }
+
+    struct nvme_sqe *io_read = nvme_get_next_sqe(&ns->ctrl->io_sq,
+                                                 write ? NVME_SQE_OPC_IO_WRITE
+                                                       : NVME_SQE_OPC_IO_READ,
+                                                 NULL, prp1, prp2);
+    io_read->nsid = ns->ns_id;
+    io_read->dword[10] = (u32)lba;
+    io_read->dword[11] = (u32)(lba >> 32);
+    io_read->dword[12] = (1U << 31 /* limited retry */) | (count - 1);
+
+    nvme_commit_sqe(&ns->ctrl->io_sq);
+
+    struct nvme_cqe cqe = nvme_wait(&ns->ctrl->io_sq);
+
+    if (!nvme_is_cqe_success(&cqe)) {
+        DBGC ( ns, "read io: %08x %08x %08x %08x\n",
+               cqe.dword[0], cqe.dword[1], cqe.dword[2], cqe.dword[3]);
+
+        return -1;
+    }
+
+    DBGC ( ns, "ns %d %s lba %d+%d\n", ns->ns_id, write ? "write" : "read",
+           lba, count);
+    return count;
+}
+
+// Transfer up to one page of data using the internal dma bounce buffer
+static int nvme_bounce_xfer(struct nvme_namespace *ns, u64 lba, void *buf, u16 count,
+                            int write)
+{
+    u16 const max_blocks = NVME_PAGE_SIZE / ns->block_size;
+    u16 blocks = count < max_blocks ? count : max_blocks;
+
+    if (write)
+        memcpy(nvme_dma_buffer, buf, blocks * ns->block_size);
+
+    int res = nvme_io_xfer(ns, lba, nvme_dma_buffer, NULL, blocks, write);
+
+    if (!write && res >= 0)
+        memcpy(buf, nvme_dma_buffer, res * ns->block_size);
+
+    return res;
+}
+
+// Transfer less than a single block
+static int nvme_bounce_xfer_subblock(struct nvme_namespace *ns, u64 lba, void *buf, u16 len, int write)
+{
+    //if (write)
+    //    memcpy(nvme_dma_buffer, buf, blocks * ns->block_size);
+
+    int res = nvme_io_xfer(ns, lba, virt_to_phys(nvme_dma_buffer), NULL, 1, write);
+
+    memcpy(buf, nvme_dma_buffer, len);
+
+    //DBG_HDA_IF( LOG, 0, buf, len );
+
+    return res;
+}
+
+
+#define NVME_MAX_PRPL_ENTRIES 15 /* Allows requests up to 64kb */
+
+// Transfer data using page list (if applicable)
+static int nvme_prpl_xfer(struct nvme_namespace *ns, u64 lba, void *buf, u16 count,
+               int write)
+{
+    u32 base = (long)buf;
+    s32 size;
+
+    if (count > ns->max_req_size)
+        count = ns->max_req_size;
+
+    size = count * ns->block_size;
+    /* Special case for transfers that fit into PRP1, but are unaligned */
+    if (((size + (base & ~NVME_PAGE_MASK)) <= NVME_PAGE_SIZE))
+        goto single;
+
+    /* Every request has to be page aligned */
+    if (base & ~NVME_PAGE_MASK)
+        goto bounce;
+
+    /* Make sure a full block fits into the last chunk */
+    if (size & (ns->block_size - 1ULL))
+        goto bounce;
+
+    /* Build PRP list if we need to describe more than 2 pages */
+    if ((ns->block_size * count) > (NVME_PAGE_SIZE * 2)) {
+        u32 prpl_len = 0;
+        u64 *prpl = nvme_dma_buffer;
+        int first_page = 1;
+        for (; size > 0; base += NVME_PAGE_SIZE, size -= NVME_PAGE_SIZE) {
+            if (first_page) {
+                /* First page is special */
+                first_page = 0;
+                continue;
+            }
+            if (prpl_len >= NVME_MAX_PRPL_ENTRIES)
+                goto bounce;
+            prpl[prpl_len++] = base;
+        }
+        return nvme_io_xfer(ns, lba, virt_to_phys(buf), virt_to_phys(prpl), count, write);
+    }
+
+    /* Directly embed the 2nd page if we only need 2 pages */
+    if ((ns->block_size * count) > NVME_PAGE_SIZE)
+        return nvme_io_xfer(ns, lba, virt_to_phys(buf), virt_to_phys(buf + NVME_PAGE_SIZE), count, write);
+
+    single:
+    /* One page is enough, don't expose anything else */
+    return nvme_io_xfer(ns, lba, virt_to_phys(buf), NULL, count, write);
+
+    bounce:
+    /* Use bounce buffer to make transfer */
+    return nvme_bounce_xfer(ns, lba, virt_to_phys(buf), count, write);
+}
+
+//static int nvme_cmd_readwrite(struct nvme_namespace *ns, struct disk_op_s *op, int write)
+//{
+//    int i;
+//    for (i = 0; i < op->count;) {
+//        u16 blocks_remaining = op->count - i;
+//        char *op_buf = op->buf_fl + i * ns->block_size;
+//        int blocks = nvme_prpl_xfer(ns, op->lba + i, op_buf,
+//                                    blocks_remaining, write);
+//        if (blocks < 0)
+//            return DISK_RET_EBADTRACK;
+//        i += blocks;
+//    }
+//
+//    return DISK_RET_SUCCESS;
+//}
+
 static void nvme_close ( struct nvme_device *nvme, int rc ) {
     DBGC ( nvme, PCI_FMT " nvme_close()\n", PCI_ARGS ( &nvme->pci_dev ) );
+}
+
+struct interface dummy;
+
+static void nvme_step ( struct nvme_device *nvme ) {
+    /* Shut down interfaces */
+    //DBGC ( nvme, PCI_FMT " nvme_step calls intfs_shutdown(%p) \n", PCI_ARGS ( &nvme->pci_dev ), &nvme->block );
+    //intfs_shutdown ( 0, &nvme->block, NULL );
+    intfs_shutdown ( 0, &dummy, NULL );
+
+    process_del(&nvme->process);
+    ref_put(&nvme->refcnt);
 }
 
 static int nvme_read ( struct nvme_device *nvme,
                          struct interface *block,
                          uint64_t lba, unsigned int count,
                          userptr_t buffer, size_t len ) {
-    DBGC ( nvme, PCI_FMT " nvme_read()\n", PCI_ARGS ( &nvme->pci_dev ) );
+    //DBGC ( nvme, PCI_FMT " nvme_read()\n", PCI_ARGS ( &nvme->pci_dev ) );
 
-    memcpy((uint8_t*)buffer, dummysector, 512);
+    if ( !nvme->ctrl->ns )
+    {
+        ref_get(&nvme->refcnt);
+        return -EBUSY;
+    }
+
+    if ( count != 1 )
+    {
+        DBGC( nvme, "nvme_read() got count != 1, not supported yet!\n");
+        ref_get(&nvme->refcnt);
+        return -EBUSY;
+    }
+
+    if ( len % NVME_PAGE_SIZE != 0 )
+    {
+        nvme_bounce_xfer_subblock(nvme->ctrl->ns, lba, user_to_virt(buffer, 0), len, 0);
+    }
+    else
+    {
+        nvme_prpl_xfer(nvme->ctrl->ns, lba, user_to_virt(buffer, 0), len / NVME_PAGE_SIZE,  0);
+    }
+
+    process_add ( &nvme->process );
+    intf_plug_plug ( &dummy, block );
+    ref_get(&nvme->refcnt);
     return 0;
-
-   // return atadev_command ( atadev, block, &atacmd_read,
-   //                         lba, count, buffer, len );
 }
 
 static int nvme_write ( struct nvme_device *nvme,
@@ -570,18 +757,6 @@ static int nvme_write ( struct nvme_device *nvme,
 
     // return atadev_command ( atadev, block, &atacmd_write,
    //                         lba, count, buffer, len );
-}
-
-struct interface dummy;
-
-static void nvme_step ( struct nvme_device *nvme ) {
-    /* Shut down interfaces */
-    DBGC ( nvme, PCI_FMT " nvme_step calls intfs_shutdown(%p) \n", PCI_ARGS ( &nvme->pci_dev ), &nvme->block );
-    //intfs_shutdown ( 0, &nvme->block, NULL );
-    intfs_shutdown ( 0, &dummy, NULL );
-
-    process_del(&nvme->process);
-    ref_put(&nvme->refcnt);
 }
 
 /** NVMe process descriptor */
@@ -652,8 +827,6 @@ static struct interface_operation nvme_block_op[] = {
 static struct interface_descriptor nvme_block_desc =
         INTF_DESC ( struct nvme_device, block, nvme_block_op );
 
-
-
 static struct nvme_device * nvme_find ( const char *name ) {
 	struct nvme_device *nvme;
 
@@ -675,23 +848,23 @@ static struct nvme_device * nvme_find ( const char *name ) {
  * @ret rc		Return status code
  */
 static int nvme_open_uri ( struct interface *parent, struct uri *uri ) {
-	struct nvme_device *nvme;
-	int rc;
+    struct nvme_device *nvme;
+    int rc;
     unsigned long bar_start;
     size_t bar_size;
 
-	/* Sanity check */
-	if ( ! uri->opaque )
-		return -EINVAL;
+    /* Sanity check */
+    if ( ! uri->opaque )
+        return -EINVAL;
 
-	/* Find matching device */
+    /* Find matching device */
     nvme = nvme_find ( uri->opaque );
-	if ( ! nvme )
-		return -ENOENT;
+    if ( ! nvme )
+        return -ENOENT;
 
-	/* Fail if device is already open */
-	if ( nvme->opened )
-		return -EBUSY;
+    /* Fail if device is already open */
+    if ( nvme->opened )
+        return -EBUSY;
 
     ref_init ( &nvme->refcnt, NULL );
 
@@ -719,7 +892,7 @@ static int nvme_open_uri ( struct interface *parent, struct uri *uri ) {
 
     uint32_t version = nvme->ctrl->reg->vs;
     DBGC ( nvme, "Found NVMe controller with version %d.%d.%d.\n",
-            version >> 16, (version >> 8) & 0xFF, version & 0xFF);
+           version >> 16, (version >> 8) & 0xFF, version & 0xFF);
     DBGC ( nvme, "  Capabilities %016llx\n", nvme->ctrl->reg->cap);
 
     if (~nvme->ctrl->reg->cap & NVME_CAP_CSS_NVME) {
@@ -732,12 +905,11 @@ static int nvme_open_uri ( struct interface *parent, struct uri *uri ) {
         return -EBUSY;
     }
 
-
     /* Mark as opened */
-	nvme->opened = 1;
+    nvme->opened = 1;
     //ref_put ( &nvme->refcnt );
 
-	return 0;
+    return 0;
 }
 
 /** NVMe device URI opener */
