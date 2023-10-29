@@ -22,9 +22,12 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
  *
  */
 
-//#undef	CONSOLE_PCBIOS		/* Default BIOS console */
+#define 	CONSOLE_PCBIOS		/* Default BIOS console */
 //#undef	CONSOLE_EFI		/* Default EFI console */
 //#undef	CONSOLE_LINUX		/* Default Linux console */
+
+#define CONSOLE_SERIAL CONSOLE_USAGE_ALL
+#define CONSOLE_PCBIOS ( CONSOLE_USAGE_ALL & ~CONSOLE_USAGE_DEBUG )
 
 /*
  * Additional console types

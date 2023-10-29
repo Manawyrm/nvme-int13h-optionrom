@@ -7,6 +7,11 @@
 #ifndef __NVME_INT_H
 #define __NVME_INT_H
 
+typedef uint8_t u8;
+typedef uint16_t u16;
+typedef uint32_t u32;
+typedef uint64_t u64;
+
 /* Data structures */
 
 /* The register file of a NVMe host controller. This struct follows the naming
@@ -44,7 +49,7 @@ volatile struct nvme_sqe {
 /* Completion queue entry */
 volatile struct nvme_cqe {
     union {
-        u32 dword[4];
+        volatile u32 dword[4];
         volatile struct {
             u32 cdw0;
             u32 _res0;
@@ -58,34 +63,34 @@ volatile struct nvme_cqe {
 
 /* The common part of every submission or completion queue. */
 volatile struct nvme_queue {
-    u32 *dbl;                   /* doorbell */
-    u16 mask;                   /* length - 1 */
+    volatile u32 *dbl;                   /* doorbell */
+    volatile u16 mask;                   /* length - 1 */
 };
 
 volatile struct nvme_cq {
     volatile struct nvme_queue common;
-    struct nvme_cqe volatile *cqe;
+    volatile struct nvme_cqe *cqe;
 
     /* We have read upto (but not including) this entry in the queue. */
-    u16 head;
+    volatile u16 head;
 
     /* The current phase bit the controller uses to indicate that it has written
        a new entry. This is inverted after each wrap. */
-    unsigned phase : 1;
+    volatile unsigned phase : 1;
 };
 
 volatile struct nvme_sq {
     volatile struct nvme_queue common;
-    struct nvme_sqe volatile *sqe;
+    volatile struct nvme_sqe *sqe;
 
     /* Corresponding completion queue. We only support a single SQ per CQ. */
-    struct nvme_cq volatile *cq;
+    volatile struct nvme_cq *cq;
 
     /* The last entry the controller has fetched. */
-    u16 head;
+    volatile u16 head;
 
     /* The last value we have written to the tail doorbell. */
-    u16 tail;
+    volatile u16 tail;
 };
 
 struct nvme_ctrl {
@@ -93,7 +98,7 @@ struct nvme_ctrl {
     struct nvme_device *parent;
     struct nvme_namespace *ns;
 
-    struct nvme_reg volatile *reg;
+    volatile struct nvme_reg *reg;
 
     u32 doorbell_stride;        /* in bytes */
 

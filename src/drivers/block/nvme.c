@@ -14,13 +14,10 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 #include <ipxe/dma.h>
 #include <ipxe/io.h>
 #include <ipxe/efi/efi_path.h>
+#include <ipxe/blocktrans.h>
+
 #include "nvme.h"
 #include "nvme-int.h"
-
-#define u8 uint8_t
-#define u16 uint16_t
-#define u32 uint32_t
-#define u64 uint64_t
 
 /** @file
  *
@@ -51,7 +48,7 @@ static void * zalloc_page_aligned(u32 size)
  *
  ******************************************************************************
  */
-static void nvme_init_queue_common(struct nvme_ctrl *ctrl, struct nvme_queue *q, u16 q_idx,
+static void nvme_init_queue_common(struct nvme_ctrl *ctrl, volatile struct nvme_queue *q, u16 q_idx,
                        u16 length)
 {
     memset(q, 0, sizeof(*q));
@@ -60,6 +57,7 @@ static void nvme_init_queue_common(struct nvme_ctrl *ctrl, struct nvme_queue *q,
     DBGC ( ctrl, "nvme_init_queue_common(%p), stride: %p\n", ctrl->reg, ctrl->doorbell_stride);
     DBGC ( ctrl, " q %p q_idx %d dbl %p\n", q, q_idx, q->dbl);
     q->mask = length - 1;
+    mb();
 }
 
 
@@ -69,8 +67,9 @@ static int nvme_wait_csts_rdy(struct nvme_ctrl *ctrl, unsigned rdy)
 //    u32 const max_to = 500 /* ms */ * ((ctrl->reg->cap >> 24) & 0xFFU);
 //    u32 to = timer_calc(max_to);
     u32 csts;
-
+    mb();
     while (rdy != ((csts = ctrl->reg->csts) & NVME_CSTS_RDY)) {
+        mb();
 //        yield();
 
 //        if (csts & NVME_CSTS_FATAL) {
@@ -87,8 +86,8 @@ static int nvme_wait_csts_rdy(struct nvme_ctrl *ctrl, unsigned rdy)
     return 0;
 }
 
-static int nvme_init_sq(struct nvme_ctrl *ctrl, struct nvme_sq *sq, u16 q_idx, u16 length,
-             struct nvme_cq *cq)
+static int nvme_init_sq(struct nvme_ctrl *ctrl, volatile struct nvme_sq *sq, u16 q_idx, u16 length,
+                        volatile struct nvme_cq *cq)
 {
     nvme_init_queue_common(ctrl, &sq->common, q_idx, length);
     sq->sqe = dma_alloc ( &ctrl->pci->dma, &sqe_map, sizeof(*sq->sqe) * length, 4096 );
@@ -106,7 +105,7 @@ static int nvme_init_sq(struct nvme_ctrl *ctrl, struct nvme_sq *sq, u16 q_idx, u
     return 0;
 }
 
-static int nvme_init_cq(struct nvme_ctrl *ctrl, struct nvme_cq *cq, u16 q_idx, u16 length)
+static int nvme_init_cq(struct nvme_ctrl *ctrl, volatile struct nvme_cq *cq, u16 q_idx, u16 length)
 {
     nvme_init_queue_common(ctrl, &cq->common, q_idx, length);
     cq->cqe = dma_alloc ( &ctrl->pci->dma, &cqe_map, sizeof(*cq->cqe) * length, 4096 );
@@ -126,14 +125,14 @@ static int nvme_init_cq(struct nvme_ctrl *ctrl, struct nvme_cq *cq, u16 q_idx, u
 
 /* Returns the next submission queue entry (or NULL if the queue is full). It
    also fills out Command Dword 0 and clears the rest. */
-static struct nvme_sqe * nvme_get_next_sqe(struct nvme_sq *sq, u8 opc, void *metadata, void *data, void *data2)
+static volatile struct nvme_sqe * nvme_get_next_sqe(volatile struct nvme_sq *sq, u8 opc, void *metadata, void *data, void *data2)
 {
     if (((sq->head + 1) & sq->common.mask) == sq->tail) {
         DBGC ( sq, "submission queue is full\n");
         return NULL;
     }
 
-    struct nvme_sqe *sqe = &sq->sqe[sq->tail];
+    volatile struct nvme_sqe *sqe = &sq->sqe[sq->tail];
     //DBGC ( sq, "sq %p next_sqe %d\n", sq, sq->tail);
 
     memset(sqe, 0, sizeof(*sqe));
@@ -143,27 +142,28 @@ static struct nvme_sqe * nvme_get_next_sqe(struct nvme_sq *sq, u8 opc, void *met
     sqe->dptr_prp2 = (u32)data2;
 
     //DBGC ( sq, "sqe->dptr_prp1 %p\n", sqe->dptr_prp1);
-
+    mb();
     return sqe;
 }
 
-static int nvme_poll_cq(struct nvme_cq *cq)
+static int nvme_poll_cq(volatile struct nvme_cq *cq)
 {
     //DBGC ( cq, "nvme_poll_cq %p\n", &cq->cqe[cq->head].dword[3]);
-    u32 dw3 = (cq->cqe[cq->head].dword[3]);
-    //u32 dw3 = readl(&cq->cqe[cq->head].dword[3]);
+    //u32 dw3 = (cq->cqe[cq->head].dword[3]);
+    mb();
+    u32 dw3 = readl(&cq->cqe[cq->head].dword[3]);
 
     return (!!(dw3 & NVME_CQE_DW3_P) == cq->phase);
 }
 
-static int nvme_is_cqe_success(struct nvme_cqe const *cqe)
+static int nvme_is_cqe_success(volatile struct nvme_cqe const *cqe)
 {
     return ((cqe->status >> 1) & 0xFF) == 0;
 }
 
-static struct nvme_cqe nvme_error_cqe(void)
+static volatile struct nvme_cqe nvme_error_cqe(void)
 {
-    struct nvme_cqe r;
+    volatile struct nvme_cqe r;
 
     /* 0xFF is a vendor specific status code != success. Should be okay for
        indicating failure. */
@@ -171,59 +171,85 @@ static struct nvme_cqe nvme_error_cqe(void)
     return r;
 }
 
-static struct nvme_cqe nvme_consume_cqe(struct nvme_sq *sq)
+void __attribute__((noinline)) dummy2(volatile int *test)
 {
-    struct nvme_cq *cq = sq->cq;
+    *test;
+}
 
+static volatile struct nvme_cqe nvme_consume_cqe(volatile struct nvme_sq *sq, int *last_head)
+{
+    volatile struct nvme_cq *cq = sq->cq;
+    mb();
     if (!nvme_poll_cq(cq)) {
         /* Cannot consume a completion queue entry, if there is none ready. */
         return nvme_error_cqe();
     }
 
-    struct nvme_cqe *cqe = &cq->cqe[cq->head];
-    u16 cq_next_head = (cq->head + 1) & cq->common.mask;
+    mb();
+    uint16_t head = cq->head;
+
+    struct nvme_cqe cqe = cq->cqe[head];
+    mb();
+
+    u16 cq_next_head = (head + 1) & cq->common.mask;
     //DBGC ( sq, "cq %p head %d -> %d\n", cq, cq->head, cq_next_head);
-    if (cq_next_head < cq->head) {
+
+    //dummy2(sq);
+    //udelay ( 1 );
+
+    mb();
+    (void) cq;
+    (void) head;
+    (void) cq_next_head;
+
+    mb();
+    if (cq_next_head < head) {
         DBGC ( sq, "cq %p wrap\n", cq);
         cq->phase = ~cq->phase;
     }
+    *last_head = head;
     cq->head = cq_next_head;
 
     /* Update the submission queue head. */
-    if (cqe->sq_head != sq->head) {
-        sq->head = cqe->sq_head;
+    if (cqe.sq_head != sq->head) {
+        sq->head = cqe.sq_head;
         //DBGC ( sq, "sq %p advanced to %d\n", sq, cqe->sq_head);
     }
 
     /* Tell the controller that we consumed the completion. */
-    cq->common.dbl[0] = cq->head;
+    cq->common.dbl[0] = head;
+    mb();
 
-    return *cqe;
+    return cqe;
 }
 
 /* Call this after you've filled out an sqe that you've got from nvme_get_next_sqe. */
-static void nvme_commit_sqe(struct nvme_sq *sq)
+static void nvme_commit_sqe(volatile struct nvme_sq *sq)
 {
     //DBGC ( sq, "sq %p commit_sqe %d doorbell address: %p\n", sq, sq->tail, sq->common.dbl);
     sq->tail = (sq->tail + 1) & sq->common.mask;
 
     sq->common.dbl[0] = sq->tail;
+    mb();
 }
 
-static struct nvme_cqe nvme_wait(struct nvme_sq *sq)
+static volatile struct nvme_cqe nvme_wait(volatile struct nvme_sq *sq, int *lasthead)
 {
     static const unsigned nvme_timeout = 5000 /* ms */;
     //u32 to = timer_calc(nvme_timeout);
+    mb();
     while (!nvme_poll_cq(sq->cq)) {
+        mb();
         //yield();
 
         //if (timer_check(to)) {
         //    warn_timeout();
         //    return nvme_error_cqe();
         //}
+        //DBGC ( sq, "nvme_wait()\n");
     }
 
-    return nvme_consume_cqe(sq);
+    return nvme_consume_cqe(sq, lasthead);
 }
 
 /* Perform an identify command on the admin queue and return the resulting
@@ -240,7 +266,7 @@ volatile static union nvme_identify * nvme_admin_identify(struct nvme_ctrl *ctrl
 
     DBGC ( ctrl, "nvme_get_next_sqe(&ctrl->admin_sq\n");
 
-    struct nvme_sqe volatile *cmd_identify;
+    volatile struct nvme_sqe *cmd_identify;
     cmd_identify = nvme_get_next_sqe(&ctrl->admin_sq,
                                      NVME_SQE_OPC_ADMIN_IDENTIFY, NULL,
                                      dma(&identify_map, identify_buf), NULL);
@@ -253,7 +279,8 @@ volatile static union nvme_identify * nvme_admin_identify(struct nvme_ctrl *ctrl
     cmd_identify->nsid = nsid;
     cmd_identify->dword[10] = cns;
     nvme_commit_sqe(&ctrl->admin_sq);
-    struct nvme_cqe cqe = nvme_wait(&ctrl->admin_sq);
+    int dummy2;
+    struct nvme_cqe cqe = nvme_wait(&ctrl->admin_sq, &dummy2);
     if (!nvme_is_cqe_success(&cqe)) {
         goto error;
     }
@@ -276,21 +303,21 @@ static volatile struct nvme_identify_ns * nvme_admin_identify_ns(struct nvme_ctr
 }
 
 /* Release memory allocated for a completion queue */
-static void nvme_destroy_cq(struct nvme_cq *cq)
+static void nvme_destroy_cq(volatile struct nvme_cq *cq)
 {
     free(cq->cqe);
     cq->cqe = NULL;
 }
 
 /* Release memory allocated for a submission queue */
-static void nvme_destroy_sq(struct nvme_sq *sq)
+static void nvme_destroy_sq(volatile struct nvme_sq *sq)
 {
     free(sq->sqe);
     sq->sqe = NULL;
 }
 
 /* Returns 0 on success. */
-static int nvme_create_io_cq(struct nvme_ctrl *ctrl, struct nvme_cq *cq, u16 q_idx)
+static int nvme_create_io_cq(struct nvme_ctrl *ctrl, volatile struct nvme_cq *cq, u16 q_idx)
 {
     int rc;
     struct nvme_sqe *cmd_create_cq;
@@ -316,8 +343,8 @@ static int nvme_create_io_cq(struct nvme_ctrl *ctrl, struct nvme_cq *cq, u16 q_i
     cmd_create_cq->dword[11] = 1 /* physically contiguous */;
 
     nvme_commit_sqe(&ctrl->admin_sq);
-
-    struct nvme_cqe cqe = nvme_wait(&ctrl->admin_sq);
+    int dummy2;
+    struct nvme_cqe cqe = nvme_wait(&ctrl->admin_sq, &dummy2);
 
     if (!nvme_is_cqe_success(&cqe)) {
         DBGC ( ctrl, "create io cq failed: %08x %08x %08x %08x\n",
@@ -335,7 +362,7 @@ static int nvme_create_io_cq(struct nvme_ctrl *ctrl, struct nvme_cq *cq, u16 q_i
 }
 
 /* Returns 0 on success. */
-static int nvme_create_io_sq(struct nvme_ctrl *ctrl, struct nvme_sq *sq, u16 q_idx, struct nvme_cq *cq)
+static int nvme_create_io_sq(struct nvme_ctrl *ctrl, volatile struct nvme_sq *sq, u16 q_idx, struct nvme_cq *cq)
 {
     int rc;
     struct nvme_sqe *cmd_create_sq;
@@ -363,8 +390,8 @@ static int nvme_create_io_sq(struct nvme_ctrl *ctrl, struct nvme_sq *sq, u16 q_i
             cmd_create_sq->dword[10], cmd_create_sq->dword[11]);
 
     nvme_commit_sqe(&ctrl->admin_sq);
-
-    struct nvme_cqe cqe = nvme_wait(&ctrl->admin_sq);
+    int dummy2;
+    struct nvme_cqe cqe = nvme_wait(&ctrl->admin_sq, &dummy2);
 
     if (!nvme_is_cqe_success(&cqe)) {
         DBGC ( ctrl, "create io sq failed: %08x %08x %08x %08x\n",
@@ -567,8 +594,8 @@ static int nvme_io_xfer(struct nvme_namespace *ns, u64 lba, void *prp1, void *pr
         DBGC ( ns, "Internal buffer is misaligned.\n");
         return -EBUSY;
     }
-
-    struct nvme_sqe *io_read = nvme_get_next_sqe(&ns->ctrl->io_sq,
+    retry:
+    volatile struct nvme_sqe *io_read = nvme_get_next_sqe(&ns->ctrl->io_sq,
                                                  write ? NVME_SQE_OPC_IO_WRITE
                                                        : NVME_SQE_OPC_IO_READ,
                                                  NULL, prp1, prp2);
@@ -579,17 +606,18 @@ static int nvme_io_xfer(struct nvme_namespace *ns, u64 lba, void *prp1, void *pr
 
     nvme_commit_sqe(&ns->ctrl->io_sq);
 
-    struct nvme_cqe cqe = nvme_wait(&ns->ctrl->io_sq);
+    int last_head;
+    volatile struct nvme_cqe cqe = nvme_wait(&ns->ctrl->io_sq, &last_head);
+   // DBGC ( ns, "ns %d %s lba %d+%d\n", ns->ns_id, write ? "write" : "read", lba, count);
 
     if (!nvme_is_cqe_success(&cqe)) {
-        DBGC ( ns, "read io: %08x %08x %08x %08x\n",
-               cqe.dword[0], cqe.dword[1], cqe.dword[2], cqe.dword[3]);
+        DBGC ( ns, "read error, lh: %d: %08x %08x %08x %08x\n",
+               last_head, cqe.dword[0], cqe.dword[1], cqe.dword[2], cqe.dword[3]);
 
+        goto retry;
         return -1;
     }
 
-    DBGC ( ns, "ns %d %s lba %d+%d\n", ns->ns_id, write ? "write" : "read",
-           lba, count);
     return count;
 }
 
@@ -685,9 +713,17 @@ static int nvme_prpl_xfer(struct nvme_namespace *ns, u64 lba, void *buf, u16 cou
 
 static void nvme_close ( struct nvme_device *nvme, int rc ) {
     DBGC ( nvme, PCI_FMT " nvme_close()\n", PCI_ARGS ( &nvme->pci_dev ) );
+    intf_shutdown ( &nvme->block, -ENODEV );
+    nvme->opened = 0;
+    //list_del ( &usbblk->list );
+    //nvme_scsi_close ( usbblk, -ENODEV );
+    //ref_put ( &usbblk->refcnt );
+
+    return;
 }
 
 struct interface dummy;
+uint8_t busy = 0;
 
 static void nvme_step ( struct nvme_device *nvme ) {
     /* Shut down interfaces */
@@ -697,6 +733,7 @@ static void nvme_step ( struct nvme_device *nvme ) {
 
     process_del(&nvme->process);
     ref_put(&nvme->refcnt);
+    busy = 0;
 }
 
 #define LOGICAL_PAGE_SIZE 512
@@ -706,9 +743,15 @@ static int nvme_read ( struct nvme_device *nvme,
                          uint64_t lba, unsigned int count,
                          userptr_t buffer, size_t len ) {
     //DBGC ( nvme, PCI_FMT " nvme_read()\n", PCI_ARGS ( &nvme->pci_dev ) );
+    if (busy)
+    {
+        DBGC( nvme, "busy!\n");
+        return -EBUSY;
+    }
 
     if ( !nvme->ctrl->ns )
     {
+        DBGC( nvme, "nvme->ctrl->ns!\n");
         ref_get(&nvme->refcnt);
         return -EBUSY;
     }
@@ -719,6 +762,9 @@ static int nvme_read ( struct nvme_device *nvme,
         ref_get(&nvme->refcnt);
         return -EBUSY;
     }
+
+    //DBGC( nvme, "lba: %d, ", lba);
+    //DBGC( nvme, "len: %d \n", len);
 
     if ( len % nvme->ctrl->ns->block_size != 0 )
     {
@@ -734,22 +780,23 @@ static int nvme_read ( struct nvme_device *nvme,
 //
 //        int res = nvme_io_xfer(nvme->ctrl->ns, physical_block, virt_to_phys(nvme_dma_buffer), NULL, 1, 0);
 //        memcpy(user_to_virt(buffer, 0), nvme_dma_buffer + block_offset, len);
-
-        DBG_HDA_IF( LOG, 0, user_to_virt(buffer, 0), 128 );
+        DBGC( nvme, "len % nvme->ctrl->ns->block_size != 0!\n");
+        ref_get(&nvme->refcnt);
+        return -EBUSY;
     }
     else
     {
-        memset(virt_to_phys(nvme_dma_buffer), 0x00, 512);
         int res = nvme_io_xfer(nvme->ctrl->ns, lba, virt_to_phys(nvme_dma_buffer), NULL, 1, 0);
-        memcpy(user_to_virt(buffer, 0), nvme_dma_buffer, 512);
+        copy_to_user ( buffer, 0, nvme_dma_buffer, 512 );
 
-        //DBG_HDA_IF( LOG, 0, user_to_virt(buffer, 0), 128 );
+        //DBG_HDA_IF( LOG, 0, user_to_virt(buffer, 0), 512 );
         //nvme_prpl_xfer(nvme->ctrl->ns, lba, user_to_virt(buffer, 0), len / NVME_PAGE_SIZE,  0);
     }
 
     process_add ( &nvme->process );
     intf_plug_plug ( &dummy, block );
     ref_get(&nvme->refcnt);
+    busy = 1;
     return 0;
 }
 
@@ -758,7 +805,11 @@ static int nvme_write ( struct nvme_device *nvme,
                           uint64_t lba, unsigned int count,
                           userptr_t buffer, size_t len ) {
     DBGC ( nvme, PCI_FMT " nvme_write()\n", PCI_ARGS ( &nvme->pci_dev ) );
-
+    process_add ( &nvme->process );
+    intf_plug_plug ( &dummy, block );
+    ref_get(&nvme->refcnt);
+    busy = 1;
+    return 0;
     // return atadev_command ( atadev, block, &atacmd_write,
    //                         lba, count, buffer, len );
 }
@@ -784,8 +835,8 @@ static int nvme_read_capacity ( struct nvme_device *nvme,
     //capacity.blocks = nvme->ctrl->ns->lba_count * 8;
     //capacity.blksize = LOGICAL_PAGE_SIZE;
 
-    //capacity.blocks = nvme->ctrl->ns->lba_count;
-    capacity.blocks = 268435456UL;
+    capacity.blocks = nvme->ctrl->ns->lba_count;
+    //capacity.blocks = 268435456UL;
     capacity.blksize = nvme->ctrl->ns->block_size;
     capacity.max_count = 1;
 
@@ -811,7 +862,7 @@ static int nvme_edd_describe ( struct nvme_device *nvme,
 
     DBGC ( nvme, PCI_FMT " nvme_edd_describe()\n", PCI_ARGS ( &nvme->pci_dev ) );
 
-    type->type = cpu_to_le64 ( EDD_INTF_TYPE_NVME );
+    type->type = cpu_to_le64 ( EDD_INTF_TYPE_RAID );
     return 0;
 }
 /******************************************************************************
@@ -888,9 +939,11 @@ static int nvme_open_uri ( struct interface *parent, struct uri *uri ) {
     // FIXME: HACK! HACK! HACK!
     if (!nvme->pci_dev.membase)
     {
-        pci_write_config_dword( &nvme->pci_dev, PCI_BASE_ADDRESS_0 + 4, 0x1FF00000 );
+        //pci_write_config_dword( &nvme->pci_dev, PCI_BASE_ADDRESS_0 + 4, 0x1FF00000 );
         //pci_read_config ( &nvme->pci_dev );
     }
+    //pci_write_config_dword( &nvme->pci_dev, PCI_BASE_ADDRESS_0 + 4, 0x1FF00000 );
+    //pci_write_config_dword( &nvme->pci_dev, PCI_BASE_ADDRESS_0, 0x1FF00000 | PCI_BASE_ADDRESS_MEM_TYPE_MASK );
 
     /* Map registers */
     bar_start = pci_bar_start ( &nvme->pci_dev, PCI_BASE_ADDRESS_0 );
@@ -919,6 +972,12 @@ static int nvme_open_uri ( struct interface *parent, struct uri *uri ) {
         DBGC ( nvme, "Failed to enable NVMe controller.\n");
         return -EBUSY;
     }
+
+//    for (uint64_t i = 0; i < 2097152; ++i) {
+//        DBGC ( nvme, PCI_FMT " reading lba %d()\n", PCI_ARGS ( &nvme->pci_dev ), i );
+//
+//        int res = nvme_io_xfer(nvme->ctrl->ns, i, virt_to_phys(nvme_dma_buffer), NULL, 1, 0);
+//    }
 
     /* Mark as opened */
     nvme->opened = 1;
