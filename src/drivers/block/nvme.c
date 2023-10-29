@@ -531,7 +531,7 @@ static int nvme_controller_enable(struct nvme_ctrl *ctrl)
 
     ctrl->ns_count = identify->nn;
     u8 mdts = identify->mdts;
-    free(identify);
+    dma_free(&identify_map, identify, 4096);
 
     if ((ctrl->ns_count == 0) || nvme_create_io_queues(ctrl)) {
         /* No point to continue, if the controller says it doesn't have
@@ -610,22 +610,6 @@ static int nvme_bounce_xfer(struct nvme_namespace *ns, u64 lba, void *buf, u16 c
 
     return res;
 }
-
-// Transfer less than a single block
-static int nvme_bounce_xfer_subblock(struct nvme_namespace *ns, u64 lba, void *buf, u16 len, int write)
-{
-    //if (write)
-    //    memcpy(nvme_dma_buffer, buf, blocks * ns->block_size);
-
-    int res = nvme_io_xfer(ns, lba, virt_to_phys(nvme_dma_buffer), NULL, 1, write);
-
-    memcpy(buf, nvme_dma_buffer, len);
-
-    //DBG_HDA_IF( LOG, 0, buf, len );
-
-    return res;
-}
-
 
 #define NVME_MAX_PRPL_ENTRIES 15 /* Allows requests up to 64kb */
 
@@ -715,6 +699,8 @@ static void nvme_step ( struct nvme_device *nvme ) {
     ref_put(&nvme->refcnt);
 }
 
+#define LOGICAL_PAGE_SIZE 512
+
 static int nvme_read ( struct nvme_device *nvme,
                          struct interface *block,
                          uint64_t lba, unsigned int count,
@@ -734,13 +720,31 @@ static int nvme_read ( struct nvme_device *nvme,
         return -EBUSY;
     }
 
-    if ( len % NVME_PAGE_SIZE != 0 )
+    if ( len % nvme->ctrl->ns->block_size != 0 )
     {
-        nvme_bounce_xfer_subblock(nvme->ctrl->ns, lba, user_to_virt(buffer, 0), len, 0);
+//        uint64_t address = lba * LOGICAL_PAGE_SIZE;
+//        uint64_t physical_block = (address / nvme->ctrl->ns->block_size);
+//        uint64_t block_offset = (address % nvme->ctrl->ns->block_size);
+//        DBGC( nvme, "address: %d, ", address);
+//        DBGC( nvme, "phys: %d, ", physical_block);
+//        DBGC( nvme, "offset: %d\n", block_offset);
+//
+//        DBGC( nvme, "lba: %d, ", lba);
+//        DBGC( nvme, "len: %d \n", len);
+//
+//        int res = nvme_io_xfer(nvme->ctrl->ns, physical_block, virt_to_phys(nvme_dma_buffer), NULL, 1, 0);
+//        memcpy(user_to_virt(buffer, 0), nvme_dma_buffer + block_offset, len);
+
+        DBG_HDA_IF( LOG, 0, user_to_virt(buffer, 0), 128 );
     }
     else
     {
-        nvme_prpl_xfer(nvme->ctrl->ns, lba, user_to_virt(buffer, 0), len / NVME_PAGE_SIZE,  0);
+        memset(virt_to_phys(nvme_dma_buffer), 0x00, 512);
+        int res = nvme_io_xfer(nvme->ctrl->ns, lba, virt_to_phys(nvme_dma_buffer), NULL, 1, 0);
+        memcpy(user_to_virt(buffer, 0), nvme_dma_buffer, 512);
+
+        //DBG_HDA_IF( LOG, 0, user_to_virt(buffer, 0), 128 );
+        //nvme_prpl_xfer(nvme->ctrl->ns, lba, user_to_virt(buffer, 0), len / NVME_PAGE_SIZE,  0);
     }
 
     process_add ( &nvme->process );
@@ -777,7 +781,11 @@ static int nvme_read_capacity ( struct nvme_device *nvme,
 
     process_add ( &nvme->process );
 
-    capacity.blocks = nvme->ctrl->ns->lba_count;
+    //capacity.blocks = nvme->ctrl->ns->lba_count * 8;
+    //capacity.blksize = LOGICAL_PAGE_SIZE;
+
+    //capacity.blocks = nvme->ctrl->ns->lba_count;
+    capacity.blocks = 268435456UL;
     capacity.blksize = nvme->ctrl->ns->block_size;
     capacity.max_count = 1;
 
@@ -876,6 +884,13 @@ static int nvme_open_uri ( struct interface *parent, struct uri *uri ) {
     adjust_pci_device ( &nvme->pci_dev );
 
     DBGC ( nvme, PCI_FMT " nvme->pci_dev.membase(%p) \n", PCI_ARGS ( &nvme->pci_dev ), nvme->pci_dev.membase );
+
+    // FIXME: HACK! HACK! HACK!
+    if (!nvme->pci_dev.membase)
+    {
+        pci_write_config_dword( &nvme->pci_dev, PCI_BASE_ADDRESS_0 + 4, 0x1FF00000 );
+        //pci_read_config ( &nvme->pci_dev );
+    }
 
     /* Map registers */
     bar_start = pci_bar_start ( &nvme->pci_dev, PCI_BASE_ADDRESS_0 );
