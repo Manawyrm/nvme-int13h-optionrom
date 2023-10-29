@@ -49,7 +49,7 @@ static void * zalloc_page_aligned(u32 size)
  ******************************************************************************
  */
 static void nvme_init_queue_common(struct nvme_ctrl *ctrl, volatile struct nvme_queue *q, u16 q_idx,
-                       u16 length)
+                                   u16 length)
 {
     memset(q, 0, sizeof(*q));
     q->dbl = (u32 *)((char *)ctrl->reg + 0x1000 + q_idx * ctrl->doorbell_stride);
@@ -91,6 +91,7 @@ static int nvme_init_sq(struct nvme_ctrl *ctrl, volatile struct nvme_sq *sq, u16
 {
     nvme_init_queue_common(ctrl, &sq->common, q_idx, length);
     sq->sqe = dma_alloc ( &ctrl->pci->dma, &sqe_map, sizeof(*sq->sqe) * length, 4096 );
+    memset(sq->sqe, 0, sizeof(*sq->sqe) * length);
 
     if (!sq->sqe) {
         DBGC ( ctrl, "Failed to alloc memory!\n");
@@ -109,6 +110,8 @@ static int nvme_init_cq(struct nvme_ctrl *ctrl, volatile struct nvme_cq *cq, u16
 {
     nvme_init_queue_common(ctrl, &cq->common, q_idx, length);
     cq->cqe = dma_alloc ( &ctrl->pci->dma, &cqe_map, sizeof(*cq->cqe) * length, 4096 );
+    memset(cq->cqe, 0, sizeof(*cq->cqe) * length);
+
     if (!cq->cqe) {
         DBGC ( ctrl, "Failed to alloc memory!\n");
         return -1;
@@ -151,7 +154,7 @@ static int nvme_poll_cq(volatile struct nvme_cq *cq)
     //DBGC ( cq, "nvme_poll_cq %p\n", &cq->cqe[cq->head].dword[3]);
     //u32 dw3 = (cq->cqe[cq->head].dword[3]);
     mb();
-    u32 dw3 = readl(&cq->cqe[cq->head].dword[3]);
+    u32 dw3 = cq->cqe[cq->head].dword[3];
 
     return (!!(dw3 & NVME_CQE_DW3_P) == cq->phase);
 }
@@ -171,44 +174,31 @@ static volatile struct nvme_cqe nvme_error_cqe(void)
     return r;
 }
 
-void __attribute__((noinline)) dummy2(volatile int *test)
-{
-    *test;
-}
-
-static volatile struct nvme_cqe nvme_consume_cqe(volatile struct nvme_sq *sq, int *last_head)
+static volatile struct nvme_cqe nvme_consume_cqe(volatile struct nvme_sq *sq)
 {
     volatile struct nvme_cq *cq = sq->cq;
     mb();
     if (!nvme_poll_cq(cq)) {
         /* Cannot consume a completion queue entry, if there is none ready. */
+        DBGC ( sq, "Cannot consume a completion queue entry, if there is none ready: %p\n", cq);
         return nvme_error_cqe();
     }
 
     mb();
-    uint16_t head = cq->head;
-
-    struct nvme_cqe cqe = cq->cqe[head];
+    struct nvme_cqe cqe = cq->cqe[cq->head];
+    u16 cq_next_head = (cq->head + 1) & cq->common.mask;
     mb();
 
-    u16 cq_next_head = (head + 1) & cq->common.mask;
     //DBGC ( sq, "cq %p head %d -> %d\n", cq, cq->head, cq_next_head);
-
-    //dummy2(sq);
-    //udelay ( 1 );
-
+    //udelay(100);
     mb();
-    (void) cq;
-    (void) head;
-    (void) cq_next_head;
 
-    mb();
-    if (cq_next_head < head) {
-        DBGC ( sq, "cq %p wrap\n", cq);
+    if (cq_next_head < cq->head) {
+        //DBGC ( sq, "cq %p wrap\n", cq);
         cq->phase = ~cq->phase;
     }
-    *last_head = head;
     cq->head = cq_next_head;
+    mb();
 
     /* Update the submission queue head. */
     if (cqe.sq_head != sq->head) {
@@ -216,8 +206,9 @@ static volatile struct nvme_cqe nvme_consume_cqe(volatile struct nvme_sq *sq, in
         //DBGC ( sq, "sq %p advanced to %d\n", sq, cqe->sq_head);
     }
 
+
     /* Tell the controller that we consumed the completion. */
-    cq->common.dbl[0] = head;
+    cq->common.dbl[0] = cq->head;
     mb();
 
     return cqe;
@@ -233,7 +224,7 @@ static void nvme_commit_sqe(volatile struct nvme_sq *sq)
     mb();
 }
 
-static volatile struct nvme_cqe nvme_wait(volatile struct nvme_sq *sq, int *lasthead)
+static struct nvme_cqe nvme_wait(volatile struct nvme_sq *sq)
 {
     static const unsigned nvme_timeout = 5000 /* ms */;
     //u32 to = timer_calc(nvme_timeout);
@@ -249,7 +240,7 @@ static volatile struct nvme_cqe nvme_wait(volatile struct nvme_sq *sq, int *last
         //DBGC ( sq, "nvme_wait()\n");
     }
 
-    return nvme_consume_cqe(sq, lasthead);
+    return nvme_consume_cqe(sq);
 }
 
 /* Perform an identify command on the admin queue and return the resulting
@@ -263,6 +254,7 @@ volatile static union nvme_identify * nvme_admin_identify(struct nvme_ctrl *ctrl
         DBGC ( ctrl, "Could not allocate identify buffer!\n");
         return NULL;
     }
+    memset(identify_buf, 0, 4096);
 
     DBGC ( ctrl, "nvme_get_next_sqe(&ctrl->admin_sq\n");
 
@@ -279,8 +271,7 @@ volatile static union nvme_identify * nvme_admin_identify(struct nvme_ctrl *ctrl
     cmd_identify->nsid = nsid;
     cmd_identify->dword[10] = cns;
     nvme_commit_sqe(&ctrl->admin_sq);
-    int dummy2;
-    struct nvme_cqe cqe = nvme_wait(&ctrl->admin_sq, &dummy2);
+    struct nvme_cqe cqe = nvme_wait(&ctrl->admin_sq);
     if (!nvme_is_cqe_success(&cqe)) {
         goto error;
     }
@@ -343,12 +334,11 @@ static int nvme_create_io_cq(struct nvme_ctrl *ctrl, volatile struct nvme_cq *cq
     cmd_create_cq->dword[11] = 1 /* physically contiguous */;
 
     nvme_commit_sqe(&ctrl->admin_sq);
-    int dummy2;
-    struct nvme_cqe cqe = nvme_wait(&ctrl->admin_sq, &dummy2);
+    struct nvme_cqe cqe = nvme_wait(&ctrl->admin_sq);
 
     if (!nvme_is_cqe_success(&cqe)) {
         DBGC ( ctrl, "create io cq failed: %08x %08x %08x %08x\n",
-                cqe.dword[0], cqe.dword[1], cqe.dword[2], cqe.dword[3]);
+               cqe.dword[0], cqe.dword[1], cqe.dword[2], cqe.dword[3]);
 
         goto err_destroy_cq;
     }
@@ -387,15 +377,14 @@ static int nvme_create_io_sq(struct nvme_ctrl *ctrl, volatile struct nvme_sq *sq
     cmd_create_sq->dword[10] = (sq->common.mask << 16) | (q_idx >> 1);
     cmd_create_sq->dword[11] = (q_idx >> 1) << 16 | 1 /* contiguous */;
     DBGC ( ctrl, "sq %p create dword10 %08x dword11 %08x\n", sq,
-            cmd_create_sq->dword[10], cmd_create_sq->dword[11]);
+           cmd_create_sq->dword[10], cmd_create_sq->dword[11]);
 
     nvme_commit_sqe(&ctrl->admin_sq);
-    int dummy2;
-    struct nvme_cqe cqe = nvme_wait(&ctrl->admin_sq, &dummy2);
+    struct nvme_cqe cqe = nvme_wait(&ctrl->admin_sq);
 
     if (!nvme_is_cqe_success(&cqe)) {
         DBGC ( ctrl, "create io sq failed: %08x %08x %08x %08x\n",
-                cqe.dword[0], cqe.dword[1], cqe.dword[2], cqe.dword[3]);
+               cqe.dword[0], cqe.dword[1], cqe.dword[2], cqe.dword[3]);
         goto err_destroy_sq;
     }
 
@@ -438,8 +427,8 @@ static void nvme_probe_ns(struct nvme_ctrl *ctrl, u32 ns_idx, u8 mdts)
     u8 current_lba_format = id->flbas & 0xF;
     if (current_lba_format > id->nlbaf) {
         DBGC ( ctrl, "NVMe NS %d: current LBA format %d is beyond what the "
-                   " namespace supports (%d)?\n",
-                ns_id, current_lba_format, id->nlbaf + 1);
+                     " namespace supports (%d)?\n",
+               ns_id, current_lba_format, id->nlbaf + 1);
         goto free_buffer;
     }
 
@@ -454,6 +443,7 @@ static void nvme_probe_ns(struct nvme_ctrl *ctrl, u32 ns_idx, u8 mdts)
             DBGC ( ctrl, "Failed to allocate NVMe DMA buffer\n");
             goto free_buffer;
         }
+        memset(nvme_dma_buffer, 0, NVME_PAGE_SIZE);
     }
 
     struct nvme_namespace *ns = malloc(sizeof(*ns));
@@ -484,7 +474,7 @@ static void nvme_probe_ns(struct nvme_ctrl *ctrl, u32 ns_idx, u8 mdts)
     if (mdts) {
         ns->max_req_size = ((1U << mdts) * NVME_PAGE_SIZE) / ns->block_size;
         DBGC ( ctrl, "NVME NS %d max request size: %d sectors\n",
-                ns_id, ns->max_req_size);
+               ns_id, ns->max_req_size);
     } else {
         ns->max_req_size = -1U;
     }
@@ -554,7 +544,7 @@ static int nvme_controller_enable(struct nvme_ctrl *ctrl)
            identify->nn, (identify->nn == 1) ? "" : "s");
 
     DBGC ( ctrl, "NVMe has %d namespace%s.\n",
-            identify->nn, (identify->nn == 1) ? "" : "s");
+           identify->nn, (identify->nn == 1) ? "" : "s");
 
     ctrl->ns_count = identify->nn;
     u8 mdts = identify->mdts;
@@ -587,7 +577,7 @@ static int nvme_controller_enable(struct nvme_ctrl *ctrl)
 
 /* Reads count sectors into buf. The buffer cannot cross page boundaries. */
 static int nvme_io_xfer(struct nvme_namespace *ns, u64 lba, void *prp1, void *prp2,
-             u16 count, int write)
+                        u16 count, int write)
 {
     if (((u32)prp1 & 0x3) || ((u32)prp2 & 0x3)) {
         /* Buffer is misaligned */
@@ -596,9 +586,9 @@ static int nvme_io_xfer(struct nvme_namespace *ns, u64 lba, void *prp1, void *pr
     }
     retry:
     volatile struct nvme_sqe *io_read = nvme_get_next_sqe(&ns->ctrl->io_sq,
-                                                 write ? NVME_SQE_OPC_IO_WRITE
-                                                       : NVME_SQE_OPC_IO_READ,
-                                                 NULL, prp1, prp2);
+                                                          write ? NVME_SQE_OPC_IO_WRITE
+                                                                : NVME_SQE_OPC_IO_READ,
+                                                          NULL, prp1, prp2);
     io_read->nsid = ns->ns_id;
     io_read->dword[10] = (u32)lba;
     io_read->dword[11] = (u32)(lba >> 32);
@@ -606,13 +596,12 @@ static int nvme_io_xfer(struct nvme_namespace *ns, u64 lba, void *prp1, void *pr
 
     nvme_commit_sqe(&ns->ctrl->io_sq);
 
-    int last_head;
-    volatile struct nvme_cqe cqe = nvme_wait(&ns->ctrl->io_sq, &last_head);
-   // DBGC ( ns, "ns %d %s lba %d+%d\n", ns->ns_id, write ? "write" : "read", lba, count);
+    struct nvme_cqe cqe = nvme_wait(&ns->ctrl->io_sq);
+    // DBGC ( ns, "ns %d %s lba %d+%d\n", ns->ns_id, write ? "write" : "read", lba, count);
 
     if (!nvme_is_cqe_success(&cqe)) {
-        DBGC ( ns, "read error, lh: %d: %08x %08x %08x %08x\n",
-               last_head, cqe.dword[0], cqe.dword[1], cqe.dword[2], cqe.dword[3]);
+        DBGC ( ns, "read error: %08x %08x %08x %08x\n",
+               cqe.dword[0], cqe.dword[1], cqe.dword[2], cqe.dword[3]);
 
         goto retry;
         return -1;
@@ -643,7 +632,7 @@ static int nvme_bounce_xfer(struct nvme_namespace *ns, u64 lba, void *buf, u16 c
 
 // Transfer data using page list (if applicable)
 static int nvme_prpl_xfer(struct nvme_namespace *ns, u64 lba, void *buf, u16 count,
-               int write)
+                          int write)
 {
     u32 base = (long)buf;
     s32 size;
@@ -739,9 +728,9 @@ static void nvme_step ( struct nvme_device *nvme ) {
 #define LOGICAL_PAGE_SIZE 512
 
 static int nvme_read ( struct nvme_device *nvme,
-                         struct interface *block,
-                         uint64_t lba, unsigned int count,
-                         userptr_t buffer, size_t len ) {
+                       struct interface *block,
+                       uint64_t lba, unsigned int count,
+                       userptr_t buffer, size_t len ) {
     //DBGC ( nvme, PCI_FMT " nvme_read()\n", PCI_ARGS ( &nvme->pci_dev ) );
     if (busy)
     {
@@ -801,9 +790,9 @@ static int nvme_read ( struct nvme_device *nvme,
 }
 
 static int nvme_write ( struct nvme_device *nvme,
-                          struct interface *block,
-                          uint64_t lba, unsigned int count,
-                          userptr_t buffer, size_t len ) {
+                        struct interface *block,
+                        uint64_t lba, unsigned int count,
+                        userptr_t buffer, size_t len ) {
     DBGC ( nvme, PCI_FMT " nvme_write()\n", PCI_ARGS ( &nvme->pci_dev ) );
     process_add ( &nvme->process );
     intf_plug_plug ( &dummy, block );
@@ -811,7 +800,7 @@ static int nvme_write ( struct nvme_device *nvme,
     busy = 1;
     return 0;
     // return atadev_command ( atadev, block, &atacmd_write,
-   //                         lba, count, buffer, len );
+    //                         lba, count, buffer, len );
 }
 
 /** NVMe process descriptor */
@@ -820,7 +809,7 @@ static struct process_descriptor nvme_process_desc =
 
 
 static int nvme_read_capacity ( struct nvme_device *nvme,
-                                  struct interface *block ) {
+                                struct interface *block ) {
     DBGC ( nvme, PCI_FMT " nvme_read_capacity()\n", PCI_ARGS ( &nvme->pci_dev ) );
     struct block_device_capacity capacity;
 
@@ -857,8 +846,8 @@ static int nvme_read_capacity ( struct nvme_device *nvme,
 }
 
 static int nvme_edd_describe ( struct nvme_device *nvme,
-                                 struct edd_interface_type *type,
-                                 union edd_device_path *path ) {
+                               struct edd_interface_type *type,
+                               union edd_device_path *path ) {
 
     DBGC ( nvme, PCI_FMT " nvme_edd_describe()\n", PCI_ARGS ( &nvme->pci_dev ) );
 
@@ -887,16 +876,16 @@ static struct interface_descriptor nvme_block_desc =
         INTF_DESC ( struct nvme_device, block, nvme_block_op );
 
 static struct nvme_device * nvme_find ( const char *name ) {
-	struct nvme_device *nvme;
+    struct nvme_device *nvme;
 
-	/* Look for matching device */
-	list_for_each_entry ( nvme, &nvme_devices, list ) {
+    /* Look for matching device */
+    list_for_each_entry ( nvme, &nvme_devices, list ) {
         return nvme;
-		//if ( strcmp ( nvme->func->name, name ) == 0 )
-		// 	return usbblk;
-	}
+        //if ( strcmp ( nvme->func->name, name ) == 0 )
+        // 	return usbblk;
+    }
 
-	return NULL;
+    return NULL;
 }
 
 /**
@@ -988,8 +977,8 @@ static int nvme_open_uri ( struct interface *parent, struct uri *uri ) {
 
 /** NVMe device URI opener */
 struct uri_opener nvme_uri_opener __uri_opener = {
-	.scheme = "nvme",
-	.open = nvme_open_uri,
+        .scheme = "nvme",
+        .open = nvme_open_uri,
 };
 
 /**
@@ -999,30 +988,30 @@ struct uri_opener nvme_uri_opener __uri_opener = {
  * @ret rc		Return status code
  */
 static int nvme_probe (struct pci_device *pci) {
-	struct nvme_device *nvme;
-	int rc;
+    struct nvme_device *nvme;
+    int rc;
 
-	/* Allocate and initialise structure */
+    /* Allocate and initialise structure */
     nvme = zalloc ( sizeof ( *nvme ) );
-	if ( ! nvme ) {
-		rc = -ENOMEM;
-		goto err_alloc;
-	}
+    if ( ! nvme ) {
+        rc = -ENOMEM;
+        goto err_alloc;
+    }
 
     nvme->pci_dev = *pci;
     DBGC ( nvme, PCI_FMT " nvme_probe()\n",
            PCI_ARGS ( pci ) );
 
     process_init_stopped ( &nvme->process, &nvme_process_desc,
-                   &nvme->refcnt );
+                           &nvme->refcnt );
 
-	/* Add to list of devices */
+    /* Add to list of devices */
     INIT_LIST_HEAD( &nvme->list );
-	list_add_tail ( &nvme->list, &nvme_devices );
-	return 0;
+    list_add_tail ( &nvme->list, &nvme_devices );
+    return 0;
 
- err_alloc:
-	return rc;
+    err_alloc:
+    return rc;
 }
 
 /**
@@ -1031,19 +1020,19 @@ static int nvme_probe (struct pci_device *pci) {
  * @v func		USB function
  */
 static void nvme_remove (struct pci_device *pci) {
-	//struct nvme_device *usbblk = usb_func_get_drvdata ( func );
+    //struct nvme_device *usbblk = usb_func_get_drvdata ( func );
 
-	/* Remove from list of devices */
-	//list_del ( &usbblk->list );
+    /* Remove from list of devices */
+    //list_del ( &usbblk->list );
 
-	/* Close all interfaces */
-	//nvme_scsi_close ( usbblk, -ENODEV );
+    /* Close all interfaces */
+    //nvme_scsi_close ( usbblk, -ENODEV );
 
-	/* Shut down interfaces */
-	//intfs_shutdown ( -ENODEV, &usbblk->scsi, &usbblk->data, NULL );
+    /* Shut down interfaces */
+    //intfs_shutdown ( -ENODEV, &usbblk->scsi, &usbblk->data, NULL );
 
-	/* Drop reference */
-	//ref_put ( &usbblk->refcnt );
+    /* Drop reference */
+    //ref_put ( &usbblk->refcnt );
 }
 
 
