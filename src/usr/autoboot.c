@@ -186,6 +186,7 @@ int uriboot ( struct uri *filename, struct uri **root_paths,
 			printf ( "Booting%s%s from SAN device %#02x\n",
 				 ( san_filename ? " " : "" ),
 				 ( san_filename ? san_filename : "" ), drive );
+
 			rc = san_boot ( drive, san_filename );
 			printf ( "Boot from SAN device %#02x failed: %s\n",
 				 drive, strerror ( rc ) );
@@ -237,55 +238,6 @@ static void close_other_netdevs ( struct net_device *netdev ) {
  * @ret uri		URI, or NULL on failure
  */
 struct uri * fetch_next_server_and_filename ( struct settings *settings ) {
-	union {
-		struct sockaddr sa;
-		struct sockaddr_in sin;
-	} next_server;
-	char *raw_filename = NULL;
-	struct uri *uri = NULL;
-	char *filename;
-
-	/* Initialise server address */
-	memset ( &next_server, 0, sizeof ( next_server ) );
-
-	/* If we have a filename, fetch it along with the next-server
-	 * setting from the same settings block.
-	 */
-	if ( fetch_setting ( settings, &filename_setting, &settings,
-			     NULL, NULL, 0 ) >= 0 ) {
-		fetch_string_setting_copy ( settings, &filename_setting,
-					    &raw_filename );
-		fetch_ipv4_setting ( settings, &next_server_setting,
-				     &next_server.sin.sin_addr );
-	}
-	if ( ! raw_filename )
-		goto err_fetch;
-
-	/* Populate server address */
-	if ( next_server.sin.sin_addr.s_addr ) {
-		next_server.sin.sin_family = AF_INET;
-		printf ( "Next server: %s\n",
-			 inet_ntoa ( next_server.sin.sin_addr ) );
-	}
-
-	/* Expand filename setting */
-	filename = expand_settings ( raw_filename );
-	if ( ! filename )
-		goto err_expand;
-	if ( filename[0] )
-		printf ( "Filename: %s\n", filename );
-
-	/* Construct URI */
-	uri = pxe_uri ( &next_server.sa, filename );
-	if ( ! uri )
-		goto err_parse;
-
- err_parse:
-	free ( filename );
- err_expand:
-	free ( raw_filename );
- err_fetch:
-	return uri;
 }
 
 /**
@@ -295,34 +247,6 @@ struct uri * fetch_next_server_and_filename ( struct settings *settings ) {
  * @ret uri		URI, or NULL on failure
  */
 static struct uri * fetch_root_path ( struct settings *settings ) {
-	struct uri *uri = NULL;
-	char *raw_root_path;
-	char *root_path;
-
-	/* Fetch root-path setting */
-	fetch_string_setting_copy ( settings, &root_path_setting,
-				    &raw_root_path );
-	if ( ! raw_root_path )
-		goto err_fetch;
-
-	/* Expand filename setting */
-	root_path = expand_settings ( raw_root_path );
-	if ( ! root_path )
-		goto err_expand;
-	if ( root_path[0] )
-		printf ( "Root path: %s\n", root_path );
-
-	/* Parse root path */
-	uri = parse_uri ( root_path );
-	if ( ! uri )
-		goto err_parse;
-
- err_parse:
-	free ( root_path );
- err_expand:
-	free ( raw_root_path );
- err_fetch:
-	return uri;
 }
 
 /**
@@ -332,26 +256,6 @@ static struct uri * fetch_root_path ( struct settings *settings ) {
  * @ret san_filename	SAN filename, or NULL on failure
  */
 static char * fetch_san_filename ( struct settings *settings ) {
-	char *raw_san_filename;
-	char *san_filename = NULL;
-
-	/* Fetch san-filename setting */
-	fetch_string_setting_copy ( settings, &san_filename_setting,
-				    &raw_san_filename );
-	if ( ! raw_san_filename )
-		goto err_fetch;
-
-	/* Expand san-filename setting */
-	san_filename = expand_settings ( raw_san_filename );
-	if ( ! san_filename )
-		goto err_expand;
-	if ( san_filename[0] )
-		printf ( "SAN filename: %s\n", san_filename );
-
- err_expand:
-	free ( raw_san_filename );
- err_fetch:
-	return san_filename;
 }
 
 /**
@@ -360,24 +264,6 @@ static char * fetch_san_filename ( struct settings *settings ) {
  * @ret have_menu	A usable PXE menu is present
  */
 static int have_pxe_menu ( void ) {
-	struct setting vendor_class_id_setting
-		= { .tag = DHCP_VENDOR_CLASS_ID };
-	struct setting pxe_discovery_control_setting
-		= { .tag = DHCP_PXE_DISCOVERY_CONTROL };
-	struct setting pxe_boot_menu_setting
-		= { .tag = DHCP_PXE_BOOT_MENU };
-	char buf[ 10 /* "PXEClient" + NUL */ ];
-	unsigned int pxe_discovery_control;
-
-	fetch_string_setting ( NULL, &vendor_class_id_setting,
-			       buf, sizeof ( buf ) );
-	pxe_discovery_control =
-		fetch_uintz_setting ( NULL, &pxe_discovery_control_setting );
-
-	return ( ( strcmp ( buf, "PXEClient" ) == 0 ) &&
-		 setting_exists ( NULL, &pxe_boot_menu_setting ) &&
-		 ( ! ( ( pxe_discovery_control & PXEBS_SKIP ) &&
-		       setting_exists ( NULL, &filename_setting ) ) ) );
 }
 
 /**
@@ -387,74 +273,6 @@ static int have_pxe_menu ( void ) {
  * @ret rc		Return status code
  */
 int netboot ( struct net_device *netdev ) {
-	struct uri *filename;
-	struct uri *root_path;
-	char *san_filename;
-	int rc;
-
-	/* Close all other network devices */
-	close_other_netdevs ( netdev );
-
-	/* Open device and display device status */
-	if ( ( rc = ifopen ( netdev ) ) != 0 )
-		goto err_ifopen;
-	ifstat ( netdev );
-
-	/* Configure device */
-	if ( ( rc = ifconf ( netdev, NULL, 0 ) ) != 0 )
-		goto err_dhcp;
-	route();
-
-	/* Try PXE menu boot, if applicable */
-	if ( have_pxe_menu() ) {
-		printf ( "Booting from PXE menu\n" );
-		rc = pxe_menu_boot ( netdev );
-		goto err_pxe_menu_boot;
-	}
-
-	/* Fetch next server and filename (if any) */
-	filename = fetch_next_server_and_filename ( NULL );
-
-	/* Fetch root path (if any) */
-	root_path = fetch_root_path ( NULL );
-
-	/* Fetch SAN filename (if any) */
-	san_filename = fetch_san_filename ( NULL );
-
-	/* If we have both a filename and a root path, ignore an
-	 * unsupported or missing URI scheme in the root path, since
-	 * it may represent an NFS root.
-	 */
-	if ( filename && root_path &&
-	     ( ( ! uri_is_absolute ( root_path ) ) ||
-	       ( xfer_uri_opener ( root_path->scheme ) == NULL ) ) ) {
-		printf ( "Ignoring unsupported root path\n" );
-		uri_put ( root_path );
-		root_path = NULL;
-	}
-
-	/* Check that we have something to boot */
-	if ( ! ( filename || root_path ) ) {
-		rc = -ENOENT_BOOT;
-		printf ( "Nothing to boot: %s\n", strerror ( rc ) );
-		goto err_no_boot;
-	}
-
-	/* Boot using next server, filename and root path */
-	if ( ( rc = uriboot ( filename, &root_path, ( root_path ? 1 : 0 ),
-			      san_default_drive(), san_filename,
-			      ( root_path ? 0 : URIBOOT_NO_SAN ) ) ) != 0 )
-		goto err_uriboot;
-
- err_uriboot:
- err_no_boot:
-	free ( san_filename );
-	uri_put ( root_path );
-	uri_put ( filename );
- err_pxe_menu_boot:
- err_dhcp:
- err_ifopen:
-	return rc;
 }
 
 /**
@@ -491,19 +309,6 @@ void set_autoboot_busloc ( unsigned int bus_type, unsigned int location ) {
 }
 
 /**
- * Test if network device matches the autoboot device link-layer address
- *
- * @v netdev		Network device
- * @ret is_autoboot	Network device matches the autoboot device
- */
-static int is_autoboot_ll_addr ( struct net_device *netdev ) {
-
-	return ( ( memcmp ( netdev->ll_addr, autoboot_ll_addr,
-			    netdev->ll_protocol->ll_addr_len ) == 0 ) &&
-		 ( vlan_tag ( netdev ) == autoboot_vlan ) );
-}
-
-/**
  * Identify autoboot device by link-layer address
  *
  * @v ll_addr		Link-layer address
@@ -513,41 +318,12 @@ static int is_autoboot_ll_addr ( struct net_device *netdev ) {
 void set_autoboot_ll_addr ( const void *ll_addr, size_t len,
 			    unsigned int vlan ) {
 
-	/* Record autoboot link-layer address (truncated if necessary) */
-	if ( len > sizeof ( autoboot_ll_addr ) )
-		len = sizeof ( autoboot_ll_addr );
-	memcpy ( autoboot_ll_addr, ll_addr, len );
-
-	/* Record autoboot VLAN tag */
-	autoboot_vlan = vlan;
-
-	/* Mark autoboot device as present */
-	is_autoboot_device = is_autoboot_ll_addr;
 }
 
 /**
  * Boot the system
  */
 static int autoboot ( void ) {
-	struct net_device *netdev;
-	int rc = -ENODEV;
-
-	/* Try booting from each network device.  If we have a
-	 * specified autoboot device location, then use only devices
-	 * matching that location.
-	 */
-	for_each_netdev ( netdev ) {
-
-		/* Skip any non-matching devices, if applicable */
-		if ( is_autoboot_device && ( ! is_autoboot_device ( netdev ) ) )
-			continue;
-
-		/* Attempt booting from this device */
-		rc = netboot ( netdev );
-	}
-
-	printf ( "No more network devices\n" );
-	return rc;
 }
 
 /**
@@ -608,35 +384,37 @@ int ipxe ( struct net_device *netdev ) {
     struct uri *nvme_uri = parse_uri("nvme:0");
     struct uri *nvme_uris[] = {nvme_uri};
 
-    uriboot(NULL, nvme_uris, 1, 0x80, NULL, 0);
+    //uriboot(NULL, nvme_uris, 1, 0x80, NULL, 0);
 
-	/* Boot system */
-	//if ( ( image = first_image() ) != NULL ) {
-	//	/* We have an embedded image; execute it */
-	//	return image_exec ( image );
-	//} else if ( shell_banner() ) {
-	//	/* User wants shell; just give them a shell */
-	//	return shell();
-	//} else {
-	//	fetch_string_setting_copy ( NULL, &scriptlet_setting,
-	//				    &scriptlet );
-	//	if ( scriptlet ) {
-	//		/* User has defined a scriptlet; execute it */
-	//		rc = system ( scriptlet );
-	//		free ( scriptlet );
-	//		return rc;
-	//	} else {
-	//		/* Try booting.  If booting fails, offer the
-	//		 * user another chance to enter the shell.
-	//		 */
-	//		if ( netdev ) {
-	//			rc = netboot ( netdev );
-	//		} else {
-	//			rc = autoboot();
-	//		}
-	//		if ( shell_banner() )
-	//			rc = shell();
-	//		return rc;
-	//	}
-	//}
+    struct uri *filename = NULL;
+    struct uri **root_paths = nvme_uris;
+    unsigned int root_path_count = 1;
+    int drive = 0x80;
+    const char *san_filename = NULL;
+    unsigned int flags = 0;
+
+    drive = san_hook ( drive, root_paths, root_path_count,
+                       ( ( flags & URIBOOT_NO_SAN_DESCRIBE ) ?
+                         SAN_NO_DESCRIBE : 0 ) );
+    if ( drive < 0 ) {
+        rc = drive;
+        printf ( "Could not open SAN device: %s\n",
+                 strerror ( rc ) );
+        return rc;
+    }
+    printf ( "Registered SAN device %#02x\n", drive );
+
+    if ( ( rc = san_describe() ) != 0 ) {
+        printf ( "Could not describe SAN devices: %s\n",
+                 strerror ( rc ) );
+        return rc;
+    }
+
+    printf ( "Booting%s%s from SAN device %#02x\n",
+             ( san_filename ? " " : "" ),
+             ( san_filename ? san_filename : "" ), drive );
+    rc = san_boot ( drive, san_filename );
+    printf ( "Boot from SAN device %#02x failed: %s\n",
+             drive, strerror ( rc ) );
+    return rc;
 }
