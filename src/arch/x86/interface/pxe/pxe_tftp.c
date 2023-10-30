@@ -84,7 +84,6 @@ static void pxe_tftp_close ( struct pxe_tftp_connection *pxe_tftp, int rc ) {
  * @ret len		Length of window
  */
 static size_t pxe_tftp_xfer_window ( struct pxe_tftp_connection *pxe_tftp ) {
-
 	return pxe_tftp->blksize;
 }
 
@@ -99,46 +98,7 @@ static size_t pxe_tftp_xfer_window ( struct pxe_tftp_connection *pxe_tftp ) {
 static int pxe_tftp_xfer_deliver ( struct pxe_tftp_connection *pxe_tftp,
 				   struct io_buffer *iobuf,
 				   struct xfer_metadata *meta ) {
-	size_t len = iob_len ( iobuf );
-	int rc = 0;
-
-	/* Calculate new buffer position */
-	if ( meta->flags & XFER_FL_ABS_OFFSET )
-		pxe_tftp->offset = 0;
-	pxe_tftp->offset += meta->offset;
-
-	/* Copy data block to buffer */
-	if ( len == 0 ) {
-		/* No data (pure seek); treat as success */
-	} else if ( pxe_tftp->offset < pxe_tftp->start ) {
-		DBG ( " buffer underrun at %zx (min %zx)",
-		      pxe_tftp->offset, pxe_tftp->start );
-		rc = -ENOBUFS;
-	} else if ( ( pxe_tftp->offset + len ) >
-		    ( pxe_tftp->start + pxe_tftp->size ) ) {
-		DBG ( " buffer overrun at %zx (max %zx)",
-		      ( pxe_tftp->offset + len ),
-		      ( pxe_tftp->start + pxe_tftp->size ) );
-		rc = -ENOBUFS;
-	} else {
-		copy_to_user ( pxe_tftp->buffer,
-			       ( pxe_tftp->offset - pxe_tftp->start ),
-			       iobuf->data, len );
-	}
-
-	/* Calculate new buffer position */
-	pxe_tftp->offset += len;
-
-	/* Record maximum offset as the file size */
-	if ( pxe_tftp->max_offset < pxe_tftp->offset )
-		pxe_tftp->max_offset = pxe_tftp->offset;
-
-	/* Terminate transfer on error */
-	if ( rc != 0 )
-		pxe_tftp_close ( pxe_tftp, rc );
-
-	free_iob ( iobuf );
-	return rc;
+	return 0;
 }
 
 /** PXE TFTP connection interface operations */
@@ -170,42 +130,6 @@ static struct pxe_tftp_connection pxe_tftp = {
  */
 static int pxe_tftp_open ( IP4_t ipaddress, UDP_PORT_t port,
 			   UINT8_t *filename, UINT16_t blksize ) {
-	union {
-		struct sockaddr sa;
-		struct sockaddr_in sin;
-	} server;
-	struct uri *uri;
-	int rc;
-
-	/* Reset PXE TFTP connection structure */
-	memset ( &pxe_tftp, 0, sizeof ( pxe_tftp ) );
-	intf_init ( &pxe_tftp.xfer, &pxe_tftp_xfer_desc, NULL );
-	if ( blksize < TFTP_DEFAULT_BLKSIZE )
-		blksize = TFTP_DEFAULT_BLKSIZE;
-	pxe_tftp.blksize = blksize;
-	pxe_tftp.rc = -EINPROGRESS;
-
-	/* Construct URI */
-	memset ( &server, 0, sizeof ( server ) );
-	server.sin.sin_family = AF_INET;
-	server.sin.sin_addr.s_addr = ipaddress;
-	server.sin.sin_port = port;
-	DBG ( " %s", sock_ntoa ( &server.sa ) );
-	if ( port )
-		DBG ( ":%d", ntohs ( port ) );
-	DBG ( ":%s", filename );
-	uri = pxe_uri ( &server.sa, ( ( char * ) filename ) );
-	if ( ! uri ) {
-		DBG ( " could not create URI\n" );
-		return -ENOMEM;
-	}
-
-	/* Open PXE TFTP connection */
-	if ( ( rc = xfer_open_uri ( &pxe_tftp.xfer, uri ) ) != 0 ) {
-		DBG ( " could not open (%s)\n", strerror ( rc ) );
-		return rc;
-	}
-
 	return 0;
 }
 
@@ -252,37 +176,7 @@ static int pxe_tftp_open ( IP4_t ipaddress, UDP_PORT_t port,
  * other PXE API call "if an MTFTP connection is active".
  */
 static PXENV_EXIT_t pxenv_tftp_open ( struct s_PXENV_TFTP_OPEN *tftp_open ) {
-	int rc;
-
-	DBG ( "PXENV_TFTP_OPEN" );
-
-	/* Guard against callers that fail to close before re-opening */
-	pxe_tftp_close ( &pxe_tftp, 0 );
-
-	/* Open connection */
-	if ( ( rc = pxe_tftp_open ( tftp_open->ServerIPAddress,
-				    tftp_open->TFTPPort,
-				    tftp_open->FileName,
-				    tftp_open->PacketSize ) ) != 0 ) {
-		tftp_open->Status = PXENV_STATUS ( rc );
-		return PXENV_EXIT_FAILURE;
-	}
-
-	/* Wait for OACK to arrive so that we have the block size */
-	while ( ( ( rc = pxe_tftp.rc ) == -EINPROGRESS ) &&
-		( pxe_tftp.max_offset == 0 ) ) {
-		step();
-	}
-	pxe_tftp.blksize = xfer_window ( &pxe_tftp.xfer );
-	tftp_open->PacketSize = pxe_tftp.blksize;
-	DBG ( " blksize=%d", tftp_open->PacketSize );
-
-	/* EINPROGRESS is normal; we don't wait for the whole transfer */
-	if ( rc == -EINPROGRESS )
-		rc = 0;
-
-	tftp_open->Status = PXENV_STATUS ( rc );
-	return ( rc ? PXENV_EXIT_FAILURE : PXENV_EXIT_SUCCESS );
+	return PXENV_EXIT_FAILURE;
 }
 
 /**
@@ -303,10 +197,6 @@ static PXENV_EXIT_t pxenv_tftp_open ( struct s_PXENV_TFTP_OPEN *tftp_open ) {
  * @ref pxe_x86_pmode16 "implementation note" for more details.)
  */
 static PXENV_EXIT_t pxenv_tftp_close ( struct s_PXENV_TFTP_CLOSE *tftp_close ) {
-	DBG ( "PXENV_TFTP_CLOSE" );
-
-	pxe_tftp_close ( &pxe_tftp, 0 );
-	tftp_close->Status = PXENV_STATUS_SUCCESS;
 	return PXENV_EXIT_SUCCESS;
 }
 
@@ -372,29 +262,7 @@ static PXENV_EXIT_t pxenv_tftp_close ( struct s_PXENV_TFTP_CLOSE *tftp_close ) {
  * @ref pxe_x86_pmode16 "implementation note" for more details.)
  */
 static PXENV_EXIT_t pxenv_tftp_read ( struct s_PXENV_TFTP_READ *tftp_read ) {
-	int rc;
-
-	DBG ( "PXENV_TFTP_READ to %04x:%04x",
-	      tftp_read->Buffer.segment, tftp_read->Buffer.offset );
-
-	/* Read single block into buffer */
-	pxe_tftp.buffer = real_to_user ( tftp_read->Buffer.segment,
-					 tftp_read->Buffer.offset );
-	pxe_tftp.size = pxe_tftp.blksize;
-	pxe_tftp.start = pxe_tftp.offset;
-	while ( ( ( rc = pxe_tftp.rc ) == -EINPROGRESS ) &&
-		( pxe_tftp.offset == pxe_tftp.start ) )
-		step();
-	pxe_tftp.buffer = UNULL;
-	tftp_read->BufferSize = ( pxe_tftp.offset - pxe_tftp.start );
-	tftp_read->PacketNumber = ++pxe_tftp.blkidx;
-
-	/* EINPROGRESS is normal if we haven't reached EOF yet */
-	if ( rc == -EINPROGRESS )
-		rc = 0;
-
-	tftp_read->Status = PXENV_STATUS ( rc );
-	return ( rc ? PXENV_EXIT_FAILURE : PXENV_EXIT_SUCCESS );
+	return PXENV_EXIT_FAILURE;
 }
 
 /**
@@ -479,31 +347,7 @@ static PXENV_EXIT_t pxenv_tftp_read ( struct s_PXENV_TFTP_READ *tftp_read ) {
  */
 PXENV_EXIT_t pxenv_tftp_read_file ( struct s_PXENV_TFTP_READ_FILE
 				    *tftp_read_file ) {
-	int rc;
-
-	DBG ( "PXENV_TFTP_READ_FILE to %08x+%x", tftp_read_file->Buffer,
-	      tftp_read_file->BufferSize );
-
-	/* Open TFTP file */
-	if ( ( rc = pxe_tftp_open ( tftp_read_file->ServerIPAddress, 0,
-				    tftp_read_file->FileName, 0 ) ) != 0 ) {
-		tftp_read_file->Status = PXENV_STATUS ( rc );
-		return PXENV_EXIT_FAILURE;
-	}
-
-	/* Read entire file */
-	pxe_tftp.buffer = phys_to_user ( tftp_read_file->Buffer );
-	pxe_tftp.size = tftp_read_file->BufferSize;
-	while ( ( rc = pxe_tftp.rc ) == -EINPROGRESS )
-		step();
-	pxe_tftp.buffer = UNULL;
-	tftp_read_file->BufferSize = pxe_tftp.max_offset;
-
-	/* Close TFTP file */
-	pxe_tftp_close ( &pxe_tftp, rc );
-
-	tftp_read_file->Status = PXENV_STATUS ( rc );
-	return ( rc ? PXENV_EXIT_FAILURE : PXENV_EXIT_SUCCESS );
+	return PXENV_EXIT_FAILURE;
 }
 
 /**
@@ -550,34 +394,7 @@ PXENV_EXIT_t pxenv_tftp_read_file ( struct s_PXENV_TFTP_READ_FILE
  */
 static PXENV_EXIT_t pxenv_tftp_get_fsize ( struct s_PXENV_TFTP_GET_FSIZE
 					   *tftp_get_fsize ) {
-	int rc;
-
-	DBG ( "PXENV_TFTP_GET_FSIZE" );
-
-	/* Open TFTP file */
-	if ( ( rc = pxe_tftp_open ( tftp_get_fsize->ServerIPAddress, 0,
-				    tftp_get_fsize->FileName, 0 ) ) != 0 ) {
-		tftp_get_fsize->Status = PXENV_STATUS ( rc );
-		return PXENV_EXIT_FAILURE;
-	}
-
-	/* Wait for initial seek to arrive, and record size */
-	while ( ( ( rc = pxe_tftp.rc ) == -EINPROGRESS ) &&
-		( pxe_tftp.max_offset == 0 ) ) {
-		step();
-	}
-	tftp_get_fsize->FileSize = pxe_tftp.max_offset;
-	DBG ( " fsize=%d", tftp_get_fsize->FileSize );
-
-	/* EINPROGRESS is normal; we don't wait for the whole transfer */
-	if ( rc == -EINPROGRESS )
-		rc = 0;
-
-	/* Close TFTP file */
-	pxe_tftp_close ( &pxe_tftp, rc );
-
-	tftp_get_fsize->Status = PXENV_STATUS ( rc );
-	return ( rc ? PXENV_EXIT_FAILURE : PXENV_EXIT_SUCCESS );
+	return PXENV_EXIT_FAILURE;
 }
 
 /** PXE TFTP API */
