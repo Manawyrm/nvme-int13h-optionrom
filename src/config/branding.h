@@ -24,9 +24,10 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
  * "iPXE".
  *
  */
+#define PRODUCT_VENDOR "KittenLabs"
 #define PRODUCT_NAME ""
-#define PRODUCT_SHORT_NAME "iPXE"
-#define PRODUCT_URI "https://ipxe.org"
+#define PRODUCT_SHORT_NAME "NVMe Boot"
+#define PRODUCT_URI ""
 
 /*
  * Tag line
@@ -35,7 +36,7 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
  * by "iPXE", then the standard tag line "Open Source Network Boot
  * Firmware" is unlikely to fit neatly onto the screen.
  */
-#define PRODUCT_TAG_LINE "Open Source Network Boot Firmware"
+#define PRODUCT_TAG_LINE "free/open INT13h Bootloader"
 
 /*
  * Error messages
@@ -80,7 +81,7 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
  * Note that the custom URI is a printf() format string which must
  * include a format specifier for the 32-bit error number.
  */
-#define PRODUCT_ERROR_URI "https://ipxe.org/%08x"
+#define PRODUCT_ERROR_URI "https://kittenlabs.de/nvmeboot/%08x"
 
 /*
  * Command help messages

@@ -4,7 +4,7 @@ Boot legacy PCs from NVMe storage
 ![Screenshot of VM talking to NVMe storage](https://screenshot.tbspace.de/qskumcgfvtx.png)
 
 This project allows old x86 computers using a classic BIOS to boot from modern NVMe storage attached via PCI(e).
-It's based on a heavily modified version of [iPXE](https://ipxe.org/start) (which usually allows for booting from the network), but 
+It's a heavily modified version of [iPXE](https://ipxe.org/start) (which usually allows for booting from the network), but 
 instead of the network, this code uses a port of the [SeaBIOS](https://github.com/coreboot/seabios/tree/master) [NVMe implementation](https://github.com/coreboot/seabios/blob/master/src/hw/nvme.c) to talk to a local NVMe drive.
 
 ## Project status

@@ -619,29 +619,29 @@ get_pmm_decompress_to:
  */
 init_message:
 	.ascii	"\n"
-	.ascii	PRODUCT_NAME
-	.ascii	"\n"
+	.ascii	PRODUCT_VENDOR
+	.ascii	" "
 	.ascii	PRODUCT_SHORT_NAME
-	.ascii	" ("
-	.ascii	PRODUCT_URI
-	.asciz	")"
+    .ascii	","
 	.size	init_message, . - init_message
 .ifeqs	BUSTYPE, "PCIR"
-init_message_pci:
-	.asciz	" PCI"
-	.size	init_message_pci, . - init_message_pci
-.endif	/* PCIR */
-init_message_pnp:
-	.asciz	" PnP"
-	.size	init_message_pnp, . - init_message_pnp
-init_message_pmm:
-	.asciz	" PMM"
-	.size	init_message_pmm, . - init_message_pmm
-init_message_int19:
-	.asciz	" INT19"
-	.size	init_message_int19, . - init_message_int19
+ init_message_pci:
+ 	.asciz	" PCI"
+ 	.size	init_message_pci, . - init_message_pci
+ .endif	/* PCIR */
+ init_message_pnp:
+ 	.asciz	" PnP"
+ 	.size	init_message_pnp, . - init_message_pnp
+ init_message_pmm:
+ 	.asciz	" PMM"
+ 	.size	init_message_pmm, . - init_message_pmm
+ init_message_int19:
+ 	.asciz	" INT19"
+ 	.size	init_message_int19, . - init_message_int19
 init_message_prompt:
-	.asciz	"\nPress Ctrl-B to configure "
+    .ascii	"\n"
+    .ascii "Based on iPXE (ipxe.org) and SeaBIOS (seabios.org)"
+	.asciz	"\n\nPress Ctrl-B to start "
 	.size	init_message_prompt, . - init_message_prompt
 init_message_dots:
 	.asciz	"..."

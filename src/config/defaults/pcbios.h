@@ -52,7 +52,7 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 #define	USB_KEYBOARD		/* USB keyboards */
 #define USB_BLOCK		/* USB block devices */
 
-#define	REBOOT_CMD		/* Reboot command */
-#define	CPUID_CMD		/* x86 CPU feature detection command */
+//#define	REBOOT_CMD		/* Reboot command */
+//#define	CPUID_CMD		/* x86 CPU feature detection command */
 
 #endif /* CONFIG_DEFAULTS_PCBIOS_H */

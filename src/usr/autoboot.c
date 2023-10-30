@@ -593,40 +593,50 @@ int ipxe ( struct net_device *netdev ) {
 	 * to do so.
 	 *
 	 */
-	printf ( NORMAL "\n\n" PRODUCT_NAME "\n" BOLD PRODUCT_SHORT_NAME " %s"
-		 NORMAL " -- " PRODUCT_TAG_LINE " -- "
-		 CYAN PRODUCT_URI NORMAL "\nFeatures:", product_version );
-	for_each_table_entry ( feature, FEATURES )
-		printf ( " %s", feature->name );
+	//printf ( NORMAL "\n\n" PRODUCT_NAME "\n" BOLD PRODUCT_SHORT_NAME " %s"
+	//	 NORMAL " -- " PRODUCT_TAG_LINE " -- "
+	//	 CYAN PRODUCT_URI NORMAL "\nFeatures:", product_version );
+	//for_each_table_entry ( feature, FEATURES )
+	//	printf ( " %s", feature->name );
+
+    printf ( NORMAL "\n\n" BOLD PRODUCT_SHORT_NAME
+             NORMAL " -- " PRODUCT_TAG_LINE " -- " NORMAL );
+
 	printf ( "\n" );
 
+    struct uri *test = parse_uri("");
+    struct uri *nvme_uri = parse_uri("nvme:0");
+    struct uri *nvme_uris[] = {nvme_uri};
+
+    uriboot(NULL, nvme_uris, 1, 0x80, NULL, 0);
+
 	/* Boot system */
-	if ( ( image = first_image() ) != NULL ) {
-		/* We have an embedded image; execute it */
-		return image_exec ( image );
-	} else if ( shell_banner() ) {
-		/* User wants shell; just give them a shell */
-		return shell();
-	} else {
-		fetch_string_setting_copy ( NULL, &scriptlet_setting,
-					    &scriptlet );
-		if ( scriptlet ) {
-			/* User has defined a scriptlet; execute it */
-			rc = system ( scriptlet );
-			free ( scriptlet );
-			return rc;
-		} else {
-			/* Try booting.  If booting fails, offer the
-			 * user another chance to enter the shell.
-			 */
-			if ( netdev ) {
-				rc = netboot ( netdev );
-			} else {
-				rc = autoboot();
-			}
-			if ( shell_banner() )
-				rc = shell();
-			return rc;
-		}
-	}
+	//if ( ( image = first_image() ) != NULL ) {
+	//	/* We have an embedded image; execute it */
+	//	return image_exec ( image );
+	//} else if ( shell_banner() ) {
+	//	/* User wants shell; just give them a shell */
+	//	return shell();
+	//} else {
+	//	fetch_string_setting_copy ( NULL, &scriptlet_setting,
+	//				    &scriptlet );
+	//	if ( scriptlet ) {
+	//		/* User has defined a scriptlet; execute it */
+	//		rc = system ( scriptlet );
+	//		free ( scriptlet );
+	//		return rc;
+	//	} else {
+	//		/* Try booting.  If booting fails, offer the
+	//		 * user another chance to enter the shell.
+	//		 */
+	//		if ( netdev ) {
+	//			rc = netboot ( netdev );
+	//		} else {
+	//			rc = autoboot();
+	//		}
+	//		if ( shell_banner() )
+	//			rc = shell();
+	//		return rc;
+	//	}
+	//}
 }
