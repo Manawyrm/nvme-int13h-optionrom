@@ -168,6 +168,12 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 #undef ENTROPY_RDRAND
 #undef REBOOT_PCBIOS
 
+#undef	PCI_SETTINGS	/* PCI device settings */
+#undef	CPUID_SETTINGS	/* CPUID settings */
+#undef	MEMMAP_SETTINGS	/* Memory map settings */
+#undef	VMWARE_SETTINGS	/* VMware GuestInfo settings */
+#undef	VRAM_SETTINGS	/* Video RAM dump settings */
+#undef	ACPI_SETTINGS	/* ACPI settings */
 
 /*
  * ROM-specific options
