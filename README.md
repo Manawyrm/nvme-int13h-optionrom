@@ -1,5 +1,5 @@
 # NVMe INT13h Option ROM
-Boot legacy PCs from NVMe storage:
+Boot legacy PCs from NVMe storage: [YouTube video with ThinkPad T43](https://www.youtube.com/watch?v=TVKbFLtXLYM)
 
 ![T43 showing the NVME BIOS init message](https://screenshot.tbspace.de/bsqzafghutv.jpg)
 ![T43 Boot Menu showing a NVMe option](https://screenshot.tbspace.de/rdmgtabvhpl.jpg)
