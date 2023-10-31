@@ -1,7 +1,8 @@
 # NVMe INT13h Option ROM
-Boot legacy PCs from NVMe storage
+Boot legacy PCs from NVMe storage:
 
-![Screenshot of VM talking to NVMe storage](https://screenshot.tbspace.de/qskumcgfvtx.png)
+![T43 showing the NVME BIOS init message](https://screenshot.tbspace.de/bsqzafghutv.jpg)
+![T43 Boot Menu showing a NVMe option](https://screenshot.tbspace.de/rdmgtabvhpl.jpg)
 
 This project allows old x86 computers using a classic BIOS to boot from modern NVMe storage attached via PCI(e).
 It's a heavily modified version of [iPXE](https://ipxe.org/start) (which usually allows for booting from the network), but 
@@ -25,8 +26,9 @@ Very little fault tolerance and testing on different devices.
 - Option ROM, USB flash drive, SD card, CD-ROM, chainloading (e.g. from grub) booting supported
 
 ## Limitations
-- Write support is currently disabled. The code is present, but it's additional danger for no benefit (for my usecase).
-- 64bit BARs are probably not handled correctly (untested!).
+- Write support is currently disabled. The code is present, but it's additional danger for no benefit (for my usecase)
+- Only 1 NVMe drive (with 1 namespace) is properly handled at the moment
+- 64bit BARs are probably not handled correctly (untested!)
 
 ## Similar projects / Alternatives
 There are 2 other Option ROMs publicly available:
