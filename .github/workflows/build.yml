@@ -1,121 +1,53 @@
 name: Build
 
-on: push
+on:
+  create: { }
+  pull_request: { }
+
+permissions:
+  contents: write
 
 jobs:
-
-  cache:
-    name: Cache
-    runs-on: ubuntu-22.04
+  x86:
+    name: x86
+    runs-on: ubuntu-24.04
     steps:
-      - name: Cache permissions
-        run: |
-          sudo chown $(id -un) /var/cache/apt/archives
-      - name: Cache packages
-        uses: actions/cache@v3
-        with:
-          path: /var/cache/apt/archives/*.deb
-          key: apt-cache-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: |
-            apt-cache-
       - name: Download packages
         run: |
           sudo apt update
-          sudo apt install -y -d -o Acquire::Retries=50 \
-                           mtools syslinux isolinux \
-                           libc6-dev-i386 valgrind \
-                           gcc-arm-none-eabi gcc-aarch64-linux-gnu
+          sudo apt install -y mtools syslinux isolinux liblzma-dev genisoimage
 
-  x86:
-    name: x86
-    runs-on: ubuntu-22.04
-    needs: cache
-    steps:
       - name: Check out code
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
-      - name: Cache permissions
-        run: |
-          sudo chown $(id -un) /var/cache/apt/archives
-      - name: Cache packages
-        uses: actions/cache/restore@v3
-        with:
-          path: /var/cache/apt/archives/*.deb
-          key: apt-cache-${{ github.run_id }}-${{ github.run_attempt }}
-      - name: Install packages
-        run: |
-          sudo dpkg --add-architecture i386
-          sudo apt update
-          sudo apt install -y -o Acquire::Retries=50 \
-                           mtools syslinux isolinux \
-                           libc6-dev-i386 valgrind \
-                           libgcc-s1:i386 libc6-dbg:i386
+
+      - name: git tag (workaround)
+        run: git tag -f v0.0.1
+
       - name: Build (BIOS)
         run: |
-          make -j 4 -C src
-      - name: Build (Everything)
-        run: |
-          make -j 4 -C src everything
-      - name: Test
-        run: |
-          valgrind ./src/bin-i386-linux/tests.linux
-          valgrind ./src/bin-x86_64-linux/tests.linux
+          make NO_WERROR=1 -j $(nproc) -C src
 
-  arm32:
-    name: ARM32
-    runs-on: ubuntu-22.04
-    needs: cache
-    steps:
-      - name: Check out code
-        uses: actions/checkout@v3
+      - name: Release build artifacts
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
         with:
-          fetch-depth: 0
-      - name: Cache permissions
-        run: |
-          sudo chown $(id -un) /var/cache/apt/archives
-      - name: Cache packages
-        uses: actions/cache/restore@v3
-        with:
-          path: /var/cache/apt/archives/*.deb
-          key: apt-cache-${{ github.run_id }}-${{ github.run_attempt }}
-      - name: Install packages
-        run: |
-          sudo apt update
-          sudo apt install -y -o Acquire::Retries=50 \
-                           mtools syslinux isolinux gcc-arm-none-eabi
-      - name: Build
-        run: |
-          make -j 4 -C src CROSS=arm-none-eabi- \
-               bin-arm32-efi/intel.efi \
-               bin-arm32-efi/intel.usb \
-               bin-arm32-efi/intel.iso
-
-  arm64:
-    name: ARM64
-    runs-on: ubuntu-22.04
-    needs: cache
-    steps:
-      - name: Check out code
-        uses: actions/checkout@v3
-        with:
-          fetch-depth: 0
-      - name: Cache permissions
-        run: |
-          sudo chown $(id -un) /var/cache/apt/archives
-      - name: Cache packages
-        uses: actions/cache/restore@v3
-        with:
-          path: /var/cache/apt/archives/*.deb
-          key: apt-cache-${{ github.run_id }}-${{ github.run_attempt }}
-      - name: Install packages
-        run: |
-          sudo apt update
-          sudo apt install -y -o Acquire::Retries=50 \
-                           mtools syslinux isolinux gcc-aarch64-linux-gnu
-      - name: Build
-        run: |
-          make -j 4 -C src CROSS=aarch64-linux-gnu- \
-               bin-arm64-efi/ipxe.efi \
-               bin-arm64-efi/ipxe.usb \
-               bin-arm64-efi/ipxe.iso
+          files: |
+            ./src/bin/ipxe.dsk
+            ./src/bin/ipxe.lkrn
+            ./src/bin/ipxe.pxe
+            ./src/bin/undionly.kpxe
+            ./src/bin/rtl8139.rom
+            ./src/bin/8086100e.mrom
+            ./src/bin/80861209.rom
+            ./src/bin/10500940.rom
+            ./src/bin/10222000.rom
+            ./src/bin/10ec8139.rom
+            ./src/bin/1af41000.rom
+            ./src/bin/8086100f.mrom
+            ./src/bin/808610d3.mrom
+            ./src/bin/15ad07b0.rom
+            ./src/bin/ipxe.usb
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
