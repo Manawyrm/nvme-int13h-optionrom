@@ -28,6 +28,7 @@ jobs:
       - name: Build (BIOS)
         run: |
           make NO_WERROR=1 -j $(nproc) -C src
+          make NO_WERROR=1 -j $(nproc) -C src bin/11ab4351.rom
 
       - name: Release build artifacts
         uses: softprops/action-gh-release@v1
@@ -48,6 +49,7 @@ jobs:
             ./src/bin/8086100f.mrom
             ./src/bin/808610d3.mrom
             ./src/bin/15ad07b0.rom
+            ./src/bin/11ab4351.rom
             ./src/bin/ipxe.usb
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
