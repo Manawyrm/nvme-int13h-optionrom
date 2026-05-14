@@ -29,6 +29,7 @@ jobs:
         run: |
           make NO_WERROR=1 -j $(nproc) -C src
           make NO_WERROR=1 -j $(nproc) -C src bin/11ab4351.rom
+          make NO_WERROR=1 -j $(nproc) -C src bin/19692048.rom
 
       - name: Release build artifacts
         uses: softprops/action-gh-release@v1
