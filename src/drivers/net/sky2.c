@@ -117,7 +117,10 @@ static struct pci_device_id sky2_id_table[] = {
 	PCI_ROM(0x11ab, 0x436c, "m88e8072", "Marvell 88E8072", 0),
 	PCI_ROM(0x11ab, 0x436d, "m88e8055b", "Marvell 88E8055", 0),
 	PCI_ROM(0x11ab, 0x4370, "m88e8075", "Marvell 88E8075", 0),
-	PCI_ROM(0x11ab, 0x4380, "m88e8057", "Marvell 88E8057", 0)
+	PCI_ROM(0x11ab, 0x4380, "m88e8057", "Marvell 88E8057", 0),
+	/* Ugly hack: This is not a Sky2/Marvell NIC, but we needed to define the PCI-ID somewhere */
+	/* It does _NOT_ work with this driver, but it doesn't need to -- we only want to use NVMe */
+	PCI_ROM(0x1969, 0x2048, "m88e2048", "Atheros L2 10/100", 0),
 };
 
 /* Avoid conditionals by using array */
