@@ -4,7 +4,7 @@
 #
 
 CLEANUP		:=
-CFLAGS		:=
+CFLAGS		:= -Wno-incompatible-pointer-types
 ASFLAGS		:=
 LDFLAGS		:=
 HOST_CFLAGS	:=
@@ -130,8 +130,8 @@ INCDIRS		+= include .
 # Default build target: build the most common targets and print out a
 # helpfully suggestive message
 #
-ALL		:= bin/blib.a bin/ipxe.dsk bin/ipxe.lkrn bin/ipxe.iso \
-		   bin/ipxe.usb bin/ipxe.pxe bin/undionly.kpxe bin/rtl8139.rom \
+ALL		:= bin/blib.a bin/nvmeboot.dsk bin/nvmeboot.lkrn bin/nvmeboot.iso \
+		   bin/nvmeboot.usb bin/nvmeboot.pxe bin/undionly.kpxe bin/rtl8139.rom \
 		   bin/8086100e.mrom bin/80861209.rom bin/10500940.rom \
 		   bin/10222000.rom bin/10ec8139.rom bin/1af41000.rom \
 		   bin/8086100f.mrom bin/808610d3.mrom bin/15ad07b0.rom

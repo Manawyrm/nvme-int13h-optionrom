@@ -1413,6 +1413,11 @@ endif
 $(BIN)/etherboot.% : $(BIN)/ipxe.%
 	ln -sf $(notdir $<) $@
 
+# Alias for ipxe.%
+#
+$(BIN)/nvmeboot.% : $(BIN)/ipxe.%
+	ln -sf $(notdir $<) $@
+
 endif # defined(BIN)
 
 ###############################################################################

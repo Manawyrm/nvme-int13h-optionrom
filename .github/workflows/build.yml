@@ -31,14 +31,19 @@ jobs:
           make NO_WERROR=1 -j $(nproc) -C src bin/11ab4351.rom
           make NO_WERROR=1 -j $(nproc) -C src bin/19692048.rom
 
+      - name: Build (1.44M floppy image)
+        run: |
+          dd if=/dev/zero of=./src/bin/nvmeboot.ima bs=1440k count=1
+          dd if=./src/bin/nvmeboot.dsk of=./src/bin/nvmeboot.ima conv=notrunc
+
       - name: Release build artifacts
         uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: |
-            ./src/bin/ipxe.dsk
-            ./src/bin/ipxe.lkrn
-            ./src/bin/ipxe.pxe
+            ./src/bin/nvmeboot.dsk
+            ./src/bin/nvmeboot.lkrn
+            ./src/bin/nvmeboot.pxe
             ./src/bin/undionly.kpxe
             ./src/bin/rtl8139.rom
             ./src/bin/8086100e.mrom
@@ -52,6 +57,6 @@ jobs:
             ./src/bin/15ad07b0.rom
             ./src/bin/11ab4351.rom
             ./src/bin/19692048.rom
-            ./src/bin/ipxe.usb
+            ./src/bin/nvmeboot.usb
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
