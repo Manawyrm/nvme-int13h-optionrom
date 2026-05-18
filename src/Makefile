@@ -4,7 +4,7 @@
 #
 
 CLEANUP		:=
-CFLAGS		:=
+CFLAGS		:= -Wno-incompatible-pointer-types
 ASFLAGS		:=
 LDFLAGS		:=
 HOST_CFLAGS	:=
