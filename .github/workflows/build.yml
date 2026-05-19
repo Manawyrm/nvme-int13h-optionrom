@@ -37,6 +37,7 @@ jobs:
           mv ./src/bin/ipxe.lkrn ./src/bin/nvmeboot.lkrn
           mv ./src/bin/ipxe.pxe ./src/bin/nvmeboot.pxe
           mv ./src/bin/ipxe.usb ./src/bin/nvmeboot.usb
+          mv ./src/bin/ipxe.iso ./src/bin/nvmeboot.iso
 
       - name: Build (1.44M floppy image)
         run: |
@@ -53,6 +54,7 @@ jobs:
             ./src/bin/nvmeboot.pxe
             ./src/bin/nvmeboot.usb
             ./src/bin/nvmeboot.ima
+            ./src/bin/nvmeboot.iso
             ./src/bin/undionly.kpxe
             ./src/bin/rtl8139.rom
             ./src/bin/8086100e.mrom

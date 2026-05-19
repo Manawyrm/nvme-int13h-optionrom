@@ -597,7 +597,11 @@ static int nvme_io_xfer(struct nvme_namespace *ns, u64 lba, void *prp1, void *pr
     nvme_commit_sqe(&ns->ctrl->io_sq);
 
     struct nvme_cqe cqe = nvme_wait(&ns->ctrl->io_sq);
-    // DBGC ( ns, "ns %d %s lba %d+%d\n", ns->ns_id, write ? "write" : "read", lba, count);
+
+    DBGC ( ns, "nvme_io_xfer(ns_id: %d", ns->ns_id);
+    DBGC ( ns, ", type: %s", write ? "write" : "read");
+    DBGC ( ns, ", lba: %d", lba);
+    DBGC ( ns, ", count: %d)\n", count);
 
     if (!nvme_is_cqe_success(&cqe)) {
         DBGC ( ns, "read error: %08x %08x %08x %08x\n",
@@ -608,80 +612,6 @@ static int nvme_io_xfer(struct nvme_namespace *ns, u64 lba, void *prp1, void *pr
     }
 
     return count;
-}
-
-// Transfer up to one page of data using the internal dma bounce buffer
-static int nvme_bounce_xfer(struct nvme_namespace *ns, u64 lba, void *buf, u16 count,
-                            int write)
-{
-    u16 const max_blocks = NVME_PAGE_SIZE / ns->block_size;
-    u16 blocks = count < max_blocks ? count : max_blocks;
-
-    if (write)
-        memcpy(nvme_dma_buffer, buf, blocks * ns->block_size);
-
-    int res = nvme_io_xfer(ns, lba, nvme_dma_buffer, NULL, blocks, write);
-
-    if (!write && res >= 0)
-        memcpy(buf, nvme_dma_buffer, res * ns->block_size);
-
-    return res;
-}
-
-#define NVME_MAX_PRPL_ENTRIES 15 /* Allows requests up to 64kb */
-
-// Transfer data using page list (if applicable)
-static int nvme_prpl_xfer(struct nvme_namespace *ns, u64 lba, void *buf, u16 count,
-                          int write)
-{
-    u32 base = (long)buf;
-    s32 size;
-
-    if (count > ns->max_req_size)
-        count = ns->max_req_size;
-
-    size = count * ns->block_size;
-    /* Special case for transfers that fit into PRP1, but are unaligned */
-    if (((size + (base & ~NVME_PAGE_MASK)) <= NVME_PAGE_SIZE))
-        goto single;
-
-    /* Every request has to be page aligned */
-    if (base & ~NVME_PAGE_MASK)
-        goto bounce;
-
-    /* Make sure a full block fits into the last chunk */
-    if (size & (ns->block_size - 1ULL))
-        goto bounce;
-
-    /* Build PRP list if we need to describe more than 2 pages */
-    if ((ns->block_size * count) > (NVME_PAGE_SIZE * 2)) {
-        u32 prpl_len = 0;
-        u64 *prpl = nvme_dma_buffer;
-        int first_page = 1;
-        for (; size > 0; base += NVME_PAGE_SIZE, size -= NVME_PAGE_SIZE) {
-            if (first_page) {
-                /* First page is special */
-                first_page = 0;
-                continue;
-            }
-            if (prpl_len >= NVME_MAX_PRPL_ENTRIES)
-                goto bounce;
-            prpl[prpl_len++] = base;
-        }
-        return nvme_io_xfer(ns, lba, (void *) virt_to_phys(buf), (void *) virt_to_phys(prpl), count, write);
-    }
-
-    /* Directly embed the 2nd page if we only need 2 pages */
-    if ((ns->block_size * count) > NVME_PAGE_SIZE)
-        return nvme_io_xfer(ns, lba, (void *) virt_to_phys(buf),(void *) (buf + NVME_PAGE_SIZE), count, write);
-
-    single:
-    /* One page is enough, don't expose anything else */
-    return nvme_io_xfer(ns, lba, (void *) virt_to_phys(buf), NULL, count, write);
-
-    bounce:
-    /* Use bounce buffer to make transfer */
-    return nvme_bounce_xfer(ns, lba, (void *) virt_to_phys(buf), count, write);
 }
 
 //static int nvme_cmd_readwrite(struct nvme_namespace *ns, struct disk_op_s *op, int write)
@@ -704,9 +634,6 @@ static void nvme_close ( struct nvme_device *nvme, int rc ) {
     DBGC ( nvme, PCI_FMT " nvme_close()\n", PCI_ARGS ( &nvme->pci_dev ) );
     intf_shutdown ( &nvme->block, -ENODEV );
     nvme->opened = 0;
-    //list_del ( &usbblk->list );
-    //nvme_scsi_close ( usbblk, -ENODEV );
-    //ref_put ( &usbblk->refcnt );
 
     return;
 }
@@ -715,9 +642,6 @@ struct interface dummy;
 uint8_t busy = 0;
 
 static void nvme_step ( struct nvme_device *nvme ) {
-    /* Shut down interfaces */
-    //DBGC ( nvme, PCI_FMT " nvme_step calls intfs_shutdown(%p) \n", PCI_ARGS ( &nvme->pci_dev ), &nvme->block );
-    //intfs_shutdown ( 0, &nvme->block, NULL );
     intfs_shutdown ( 0, &dummy, NULL );
 
     process_del(&nvme->process);
@@ -752,8 +676,7 @@ static int nvme_read ( struct nvme_device *nvme,
         return -EBUSY;
     }
 
-    //DBGC( nvme, "lba: %d, ", lba);
-    //DBGC( nvme, "len: %d \n", len);
+    //DBGC( nvme, "nvme_read() count: %d, lba: %d, size: %d!\n", count, lba, len);
 
     if ( len % nvme->ctrl->ns->block_size != 0 )
     {
@@ -775,11 +698,11 @@ static int nvme_read ( struct nvme_device *nvme,
     }
     else
     {
+        mb();
         int res = nvme_io_xfer(nvme->ctrl->ns, lba, (void *) virt_to_phys(nvme_dma_buffer), NULL, 1, 0);
+        mb();
         copy_to_user ( buffer, 0, nvme_dma_buffer, 512 );
-
-        //DBG_HDA_IF( LOG, 0, user_to_virt(buffer, 0), 512 );
-        //nvme_prpl_xfer(nvme->ctrl->ns, lba, user_to_virt(buffer, 0), len / NVME_PAGE_SIZE,  0);
+        mb();
     }
 
     process_add ( &nvme->process );
@@ -799,8 +722,6 @@ static int nvme_write ( struct nvme_device *nvme,
     ref_get(&nvme->refcnt);
     busy = 1;
     return 0;
-    // return atadev_command ( atadev, block, &atacmd_write,
-    //                         lba, count, buffer, len );
 }
 
 /** NVMe process descriptor */
@@ -961,12 +882,6 @@ static int nvme_open_uri ( struct interface *parent, struct uri *uri ) {
         DBGC ( nvme, "Failed to enable NVMe controller.\n");
         return -EBUSY;
     }
-
-//    for (uint64_t i = 0; i < 2097152; ++i) {
-//        DBGC ( nvme, PCI_FMT " reading lba %d()\n", PCI_ARGS ( &nvme->pci_dev ), i );
-//
-//        int res = nvme_io_xfer(nvme->ctrl->ns, i, virt_to_phys(nvme_dma_buffer), NULL, 1, 0);
-//    }
 
     /* Mark as opened */
     nvme->opened = 1;

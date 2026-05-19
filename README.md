@@ -20,6 +20,7 @@ It started out as a crazy proof-of-concept, but people just seemed to have succe
 
 Typically you'll want to try one of the following images (depending on your hardware):  
 __1.44M floppy image:__ `nvmeboot.ima`  
+__CD-ROM:__ `nvmeboot.iso`  
 __Raw disk image (for CF cards, hard drives, ZIP disks, SD cards, USB flash drives, etc.):__ `nvmeboot.dsk`  
 __PXE/network boot:__ `nvmeboot.pxe`
 
