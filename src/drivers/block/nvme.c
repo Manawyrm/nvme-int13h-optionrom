@@ -719,7 +719,7 @@ static int nvme_write ( struct nvme_device *nvme,
     {
         copy_from_user ( nvme_dma_buffer, buffer, 0, 512 );
         forcemb();
-        //int res = nvme_io_xfer(nvme->ctrl->ns, lba, (void*)dma(&data_map, nvme_dma_buffer), NULL, 1, 1);
+        int res = nvme_io_xfer(nvme->ctrl->ns, lba, (void*)dma(&data_map, nvme_dma_buffer), NULL, 1, 1);
         forcemb();
     }
 
