@@ -16,7 +16,7 @@ typedef uint64_t u64;
 
 /* The register file of a NVMe host controller. This struct follows the naming
    scheme in the NVMe specification. */
-struct nvme_reg {
+volatile struct nvme_reg {
     u64 cap;                    /* controller capabilities */
     u32 vs;                     /* version */
     u32 intms;                  /* interrupt mask set */
