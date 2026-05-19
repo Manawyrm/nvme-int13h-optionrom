@@ -261,7 +261,7 @@ volatile static union nvme_identify * nvme_admin_identify(struct nvme_ctrl *ctrl
     volatile struct nvme_sqe *cmd_identify;
     cmd_identify = nvme_get_next_sqe(&ctrl->admin_sq,
                                      NVME_SQE_OPC_ADMIN_IDENTIFY, NULL,
-                                     dma(&identify_map, identify_buf), NULL);
+                                     (void *) dma(&identify_map, identify_buf), NULL);
 
     if (!cmd_identify) {
         DBGC ( ctrl, "!cmd_identify!\n");
@@ -325,7 +325,7 @@ static int nvme_create_io_cq(struct nvme_ctrl *ctrl, volatile struct nvme_cq *cq
 
     cmd_create_cq = nvme_get_next_sqe(&ctrl->admin_sq,
                                       NVME_SQE_OPC_ADMIN_CREATE_IO_CQ, NULL,
-                                      virt_to_phys(cq->cqe), NULL);
+                                      (void *) virt_to_phys(cq->cqe), NULL);
     if (!cmd_create_cq) {
         goto err_destroy_cq;
     }
@@ -369,7 +369,7 @@ static int nvme_create_io_sq(struct nvme_ctrl *ctrl, volatile struct nvme_sq *sq
 
     cmd_create_sq = nvme_get_next_sqe(&ctrl->admin_sq,
                                       NVME_SQE_OPC_ADMIN_CREATE_IO_SQ, NULL,
-                                      virt_to_phys(sq->sqe), NULL);
+                                      (void *) virt_to_phys(sq->sqe), NULL);
     if (!cmd_create_sq) {
         goto err_destroy_sq;
     }
@@ -668,20 +668,20 @@ static int nvme_prpl_xfer(struct nvme_namespace *ns, u64 lba, void *buf, u16 cou
                 goto bounce;
             prpl[prpl_len++] = base;
         }
-        return nvme_io_xfer(ns, lba, virt_to_phys(buf), virt_to_phys(prpl), count, write);
+        return nvme_io_xfer(ns, lba, (void *) virt_to_phys(buf), (void *) virt_to_phys(prpl), count, write);
     }
 
     /* Directly embed the 2nd page if we only need 2 pages */
     if ((ns->block_size * count) > NVME_PAGE_SIZE)
-        return nvme_io_xfer(ns, lba, virt_to_phys(buf), virt_to_phys(buf + NVME_PAGE_SIZE), count, write);
+        return nvme_io_xfer(ns, lba, (void *) virt_to_phys(buf),(void *) (buf + NVME_PAGE_SIZE), count, write);
 
     single:
     /* One page is enough, don't expose anything else */
-    return nvme_io_xfer(ns, lba, virt_to_phys(buf), NULL, count, write);
+    return nvme_io_xfer(ns, lba, (void *) virt_to_phys(buf), NULL, count, write);
 
     bounce:
     /* Use bounce buffer to make transfer */
-    return nvme_bounce_xfer(ns, lba, virt_to_phys(buf), count, write);
+    return nvme_bounce_xfer(ns, lba, (void *) virt_to_phys(buf), count, write);
 }
 
 //static int nvme_cmd_readwrite(struct nvme_namespace *ns, struct disk_op_s *op, int write)
@@ -775,7 +775,7 @@ static int nvme_read ( struct nvme_device *nvme,
     }
     else
     {
-        int res = nvme_io_xfer(nvme->ctrl->ns, lba, virt_to_phys(nvme_dma_buffer), NULL, 1, 0);
+        int res = nvme_io_xfer(nvme->ctrl->ns, lba, (void *) virt_to_phys(nvme_dma_buffer), NULL, 1, 0);
         copy_to_user ( buffer, 0, nvme_dma_buffer, 512 );
 
         //DBG_HDA_IF( LOG, 0, user_to_virt(buffer, 0), 512 );
