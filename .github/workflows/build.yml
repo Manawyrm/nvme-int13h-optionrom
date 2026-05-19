@@ -55,7 +55,6 @@ jobs:
             ./src/bin/nvmeboot.usb
             ./src/bin/nvmeboot.ima
             ./src/bin/nvmeboot.iso
-            ./src/bin/undionly.kpxe
             ./src/bin/rtl8139.rom
             ./src/bin/8086100e.mrom
             ./src/bin/80861209.rom

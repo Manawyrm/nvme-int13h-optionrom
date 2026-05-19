@@ -4,7 +4,7 @@
 #
 
 CLEANUP		:=
-CFLAGS		:= -Wno-incompatible-pointer-types
+CFLAGS		:= -Wno-incompatible-pointer-types -Wno-discarded-qualifiers -Wno-unused-parameter
 ASFLAGS		:=
 LDFLAGS		:=
 HOST_CFLAGS	:=
@@ -63,55 +63,18 @@ QEMUIMG		:= qemu-img
 SRCDIRS		:=
 SRCDIRS		+= libgcc
 SRCDIRS		+= core
-SRCDIRS		+= net net/tcp net/udp net/infiniband
+SRCDIRS		+= net
 SRCDIRS		+= image
 SRCDIRS		+= drivers/bus
 SRCDIRS		+= drivers/net
-SRCDIRS		+= drivers/net/e1000
-SRCDIRS		+= drivers/net/e1000e
-SRCDIRS		+= drivers/net/igb
-SRCDIRS		+= drivers/net/igbvf
-SRCDIRS		+= drivers/net/phantom
-SRCDIRS		+= drivers/net/vxge
-SRCDIRS		+= drivers/net/efi
-SRCDIRS		+= drivers/net/tg3
-SRCDIRS		+= drivers/net/bnxt
-SRCDIRS		+= drivers/net/sfc
 SRCDIRS		+= drivers/block
 SRCDIRS		+= drivers/nvs
 SRCDIRS		+= drivers/bitbash
-SRCDIRS		+= drivers/infiniband
-SRCDIRS		+= drivers/infiniband/mlx_utils_flexboot/src
-SRCDIRS		+= drivers/infiniband/mlx_utils/src/public
-SRCDIRS		+= drivers/infiniband/mlx_utils/mlx_lib/mlx_reg_access
-SRCDIRS		+= drivers/infiniband/mlx_utils/mlx_lib/mlx_nvconfig
-SRCDIRS		+= drivers/infiniband/mlx_utils/mlx_lib/mlx_vmac
-SRCDIRS		+= drivers/infiniband/mlx_utils/mlx_lib/mlx_blink_leds
-SRCDIRS		+= drivers/infiniband/mlx_utils/mlx_lib/mlx_link_speed
-SRCDIRS		+= drivers/infiniband/mlx_utils/mlx_lib/mlx_mtu
-SRCDIRS		+= drivers/infiniband/mlx_nodnic/src
-SRCDIRS		+= drivers/usb
-SRCDIRS		+= interface/pxe interface/efi interface/smbios
-SRCDIRS		+= interface/bofm
-SRCDIRS		+= interface/xen
-SRCDIRS		+= interface/hyperv
-SRCDIRS		+= tests
-SRCDIRS		+= crypto crypto/mishmash
 SRCDIRS		+= hci hci/commands hci/tui
 SRCDIRS		+= hci/mucurses hci/mucurses/widgets
 SRCDIRS		+= hci/keymap
 SRCDIRS		+= usr
 SRCDIRS		+= config
-
-# These directories contain code that is not eligible for UEFI Secure
-# Boot signing.
-#
-SRCDIRS_INSEC	+= net/oncrpc
-SRCDIRS_INSEC	+= net/80211
-SRCDIRS_INSEC	+= drivers/net/rtl818x
-SRCDIRS_INSEC	+= drivers/net/ath
-SRCDIRS_INSEC	+= drivers/net/ath/ath5k
-SRCDIRS_INSEC	+= drivers/net/ath/ath9k
 
 # NON_AUTO_SRCS lists files that are excluded from the normal
 # automatic build system.
@@ -131,7 +94,7 @@ INCDIRS		+= include .
 # helpfully suggestive message
 #
 ALL		:= bin/blib.a bin/ipxe.dsk bin/ipxe.lkrn bin/ipxe.iso \
-		   bin/ipxe.usb bin/ipxe.pxe bin/undionly.kpxe bin/rtl8139.rom \
+		   bin/ipxe.usb bin/ipxe.pxe bin/rtl8139.rom \
 		   bin/8086100e.mrom bin/80861209.rom bin/10500940.rom \
 		   bin/10222000.rom bin/10ec8139.rom bin/1af41000.rom \
 		   bin/8086100f.mrom bin/808610d3.mrom bin/15ad07b0.rom
@@ -180,23 +143,6 @@ everything :
 
 ###############################################################################
 #
-# VMware build target: all ROMs used with VMware
-#
-vmware : bin/8086100f.mrom bin/808610d3.mrom bin/10222000.rom bin/15ad07b0.rom
-	@$(ECHO) '==========================================================='
-	@$(ECHO) 
-	@$(ECHO) 'Available ROMs:'
-	@$(ECHO) '    bin/8086100f.mrom -- intel/e1000'
-	@$(ECHO) '    bin/808610d3.mrom -- intel/e1000e'
-	@$(ECHO) '    bin/10222000.rom  -- vlance/pcnet32'
-	@$(ECHO) '    bin/15ad07b0.rom  -- vmxnet3'
-	@$(ECHO) 
-	@$(ECHO) 'For more information, see https://ipxe.org/howto/vmware'
-	@$(ECHO)
-	@$(ECHO) '==========================================================='
-
-###############################################################################
-#
 # Build targets that do nothing but might be tried by users
 #
 configure :
@@ -241,9 +187,7 @@ version :
 
 # All drivers (excluding USB)
 #
-DRIVERS_ipxe	= $(DRIVERS_net) $(DRIVERS_infiniband) \
-		  $(DRIVERS_xen) $(DRIVERS_hyperv)
-
+DRIVERS_ipxe	= nvme
 # Raspberry Pi
 #
 DRIVERS_rpi	= smsc95xx lan78xx

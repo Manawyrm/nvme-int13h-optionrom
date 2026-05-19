@@ -117,7 +117,7 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
  * error codes.)
  */
 #if ! ERRFILE
-extern char missing_errfile_declaration[] __attribute__ (( deprecated ));
+extern char missing_errfile_declaration[];
 #undef ERRFILE
 #define ERRFILE ( ( int ) ( 0 * ( ( intptr_t ) missing_errfile_declaration ) ) )
 #endif

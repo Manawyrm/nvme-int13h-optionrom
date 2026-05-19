@@ -40,13 +40,6 @@ static inline __always_inline void forcemb ( void ) {
 asm volatile ( "lock; addl $0, 0(%%esp); wbinvd" : : : "memory" );
 }
 
-static void * zalloc_page_aligned(u32 size)
-{
-    void *res = malloc_phys(size, NVME_PAGE_SIZE);
-    if (res) memset(res, 0, size);
-    return res;
-}
-
 /******************************************************************************
  *
  * Endpoint management
@@ -169,7 +162,7 @@ static int nvme_is_cqe_success(volatile struct nvme_cqe const *cqe)
     return ((cqe->status >> 1) & 0xFF) == 0;
 }
 
-static volatile struct nvme_cqe nvme_error_cqe(void)
+static struct nvme_cqe nvme_error_cqe(void)
 {
     volatile struct nvme_cqe r;
 
@@ -179,7 +172,7 @@ static volatile struct nvme_cqe nvme_error_cqe(void)
     return r;
 }
 
-static volatile struct nvme_cqe nvme_consume_cqe(volatile struct nvme_sq *sq)
+static struct nvme_cqe nvme_consume_cqe(volatile struct nvme_sq *sq)
 {
     volatile struct nvme_cq *cq = sq->cq;
     forcemb();
@@ -251,7 +244,7 @@ static struct nvme_cqe nvme_wait(volatile struct nvme_sq *sq)
 /* Perform an identify command on the admin queue and return the resulting
    buffer. This may be a NULL pointer, if something failed. This function
    cannot be used after initialization, because it uses buffers in tmp zone. */
-volatile static union nvme_identify * nvme_admin_identify(struct nvme_ctrl *ctrl, u8 cns, u32 nsid)
+static volatile union nvme_identify * nvme_admin_identify(struct nvme_ctrl *ctrl, u8 cns, u32 nsid)
 {
     union nvme_identify *identify_buf = dma_alloc ( &ctrl->pci->dma, &identify_map, 4096, 4096 );
     if (!identify_buf) {
@@ -326,11 +319,9 @@ static int nvme_create_io_cq(struct nvme_ctrl *ctrl, volatile struct nvme_cq *cq
         goto err;
     }
 
-    // FIXME: virt_to_phys oder DMA Buffer?!
-
     cmd_create_cq = nvme_get_next_sqe(&ctrl->admin_sq,
                                       NVME_SQE_OPC_ADMIN_CREATE_IO_CQ, NULL,
-                                      (void *) virt_to_phys(cq->cqe), NULL);
+                                      (void *) dma(&cqe_map, cq->cqe), NULL);
     if (!cmd_create_cq) {
         goto err_destroy_cq;
     }
@@ -370,11 +361,9 @@ static int nvme_create_io_sq(struct nvme_ctrl *ctrl, volatile struct nvme_sq *sq
         goto err;
     }
 
-    // FIXME: virt_to_phys oder DMA Buffer?!
-
     cmd_create_sq = nvme_get_next_sqe(&ctrl->admin_sq,
                                       NVME_SQE_OPC_ADMIN_CREATE_IO_SQ, NULL,
-                                      (void *) virt_to_phys(sq->sqe), NULL);
+                                      (void *) dma(&sqe_map, sq->sqe), NULL);
     if (!cmd_create_sq) {
         goto err_destroy_sq;
     }
@@ -642,8 +631,6 @@ static void nvme_step ( struct nvme_device *nvme ) {
     busy = 0;
 }
 
-#define LOGICAL_PAGE_SIZE 512
-
 static int nvme_read ( struct nvme_device *nvme,
                        struct interface *block,
                        uint64_t lba, unsigned int count,
@@ -694,8 +681,6 @@ static int nvme_read ( struct nvme_device *nvme,
     return 0;
 }
 
-static volatile uint8_t tmpbuf[512];
-
 static int nvme_write ( struct nvme_device *nvme,
                         struct interface *block,
                         uint64_t lba, unsigned int count,
@@ -734,7 +719,7 @@ static int nvme_write ( struct nvme_device *nvme,
     {
         copy_from_user ( nvme_dma_buffer, buffer, 0, 512 );
         forcemb();
-        int res = nvme_io_xfer(nvme->ctrl->ns, lba, (void*)dma(&data_map, nvme_dma_buffer), NULL, 1, 1);
+        //int res = nvme_io_xfer(nvme->ctrl->ns, lba, (void*)dma(&data_map, nvme_dma_buffer), NULL, 1, 1);
         forcemb();
     }
 
@@ -866,15 +851,6 @@ static int nvme_open_uri ( struct interface *parent, struct uri *uri ) {
     adjust_pci_device ( &nvme->pci_dev );
 
     DBGC ( nvme, PCI_FMT " nvme->pci_dev.membase(%p) \n", PCI_ARGS ( &nvme->pci_dev ), nvme->pci_dev.membase );
-
-    // FIXME: HACK! HACK! HACK!
-    if (!nvme->pci_dev.membase)
-    {
-        //pci_write_config_dword( &nvme->pci_dev, PCI_BASE_ADDRESS_0 + 4, 0x1FF00000 );
-        //pci_read_config ( &nvme->pci_dev );
-    }
-    //pci_write_config_dword( &nvme->pci_dev, PCI_BASE_ADDRESS_0 + 4, 0x1FF00000 );
-    //pci_write_config_dword( &nvme->pci_dev, PCI_BASE_ADDRESS_0, 0x1FF00000 | PCI_BASE_ADDRESS_MEM_TYPE_MASK );
 
     /* Map registers */
     bar_start = pci_bar_start ( &nvme->pci_dev, PCI_BASE_ADDRESS_0 );
