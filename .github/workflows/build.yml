@@ -67,5 +67,6 @@ jobs:
             ./src/bin/15ad07b0.rom
             ./src/bin/11ab4351.rom
             ./src/bin/19692048.rom
+            ./src/bin/10ec8168.rom
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
